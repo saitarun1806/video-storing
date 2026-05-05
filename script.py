@@ -18,11 +18,14 @@ MOVIES_DIR = os.path.join(PROJECT_DIR, "movies")
 MOVIES_FILE = os.path.join(PROJECT_DIR, "movies.json")
 
 BOT_TOKEN = "8651470873:AAEMq3GGKk9FBG60O6Vd_eH5V-1x0S6Pqc4"
-CHAT_ID = "@stream1806"
+CHAT_ID = "@stream1806"  # or channel ID
 
 MAX_JSON_SIZE = 1 * 1024 * 1024
 INITIAL_CHUNK_SIZE = 700 * 1024
 
+# ======================
+# CREATE FOLDERS
+# ======================
 os.makedirs(PROJECT_DIR, exist_ok=True)
 os.makedirs(JSON_DIR, exist_ok=True)
 os.makedirs(MOVIES_DIR, exist_ok=True)
@@ -35,9 +38,9 @@ def download_video(url):
 
     for attempt in range(3):
         try:
-            with requests.get(url, stream=True, timeout=15) as r:
+            with requests.get(url, stream=True, timeout=20) as r:
                 if r.status_code != 200:
-                    raise Exception(f"Status: {r.status_code}")
+                    raise Exception(f"Status {r.status_code}")
 
                 with open(TEMP_VIDEO, "wb") as f:
                     for chunk in r.iter_content(1024 * 1024):
@@ -51,7 +54,7 @@ def download_video(url):
             print(f"⚠️ Retry {attempt+1}: {e}")
             time.sleep(2)
 
-    print("❌ Download failed (possibly expired URL)")
+    print("❌ Download failed")
     return False
 
 # ======================
@@ -65,10 +68,9 @@ def encode(data):
 # ======================
 def create_chunks():
     files = []
+    index = 0
 
     with open(TEMP_VIDEO, "rb") as f:
-        index = 0
-
         while True:
             chunk = f.read(INITIAL_CHUNK_SIZE)
             if not chunk:
@@ -85,7 +87,7 @@ def create_chunks():
             json_str = json.dumps(data, separators=(",", ":"))
             size = len(json_str.encode())
 
-            # 🔥 ensure <1MB
+            # ensure <1MB
             while size > MAX_JSON_SIZE:
                 chunk = chunk[:int(len(chunk) * 0.8)]
                 encoded = encode(chunk)
@@ -96,8 +98,8 @@ def create_chunks():
             filename = f"chunk_{index:04d}.json"
             filepath = os.path.join(JSON_DIR, filename)
 
-            with open(filepath, "w") as f:
-                f.write(json_str)
+            with open(filepath, "w") as jf:
+                jf.write(json_str)
 
             files.append(filepath)
             print(f"✅ {filename} ({size/1024:.1f} KB)")
@@ -107,7 +109,7 @@ def create_chunks():
     return files
 
 # ======================
-# TELEGRAM UPLOAD (RETRY)
+# TELEGRAM UPLOAD
 # ======================
 def upload(file_path):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
@@ -145,23 +147,23 @@ def process_movie(movie):
 
     print(f"\n🎬 Processing: {name} ({year})")
 
-    safe = name.lower().replace(" ", "_")
+    safe = name.lower().replace(" ", "_").replace("(", "").replace(")", "")
     manifest_name = f"{safe}_{year}.json"
     manifest_path = os.path.join(MOVIES_DIR, manifest_name)
 
-    # cleanup old temp file
+    # clean temp file
     if os.path.exists(TEMP_VIDEO):
         os.remove(TEMP_VIDEO)
 
-    # 1. Download
+    # download
     if not download_video(url):
-        print("⛔ Skipping movie (download failed)")
+        print("⛔ Skipping movie")
         return None
 
-    # 2. Chunk
+    # chunk
     json_files = create_chunks()
 
-    # 3. Upload
+    # upload
     chunks = []
     for i, file in enumerate(json_files):
         file_id = upload(file)
@@ -174,7 +176,7 @@ def process_movie(movie):
 
         time.sleep(0.4)
 
-    # 4. Manifest
+    # manifest
     manifest = {
         "movie": name,
         "year": year,
@@ -185,7 +187,7 @@ def process_movie(movie):
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
 
-    print(f"📝 Manifest saved → movies/{manifest_name}")
+    print(f"📝 Saved → movies/{manifest_name}")
 
     return manifest_name
 
@@ -226,6 +228,7 @@ if __name__ == "__main__":
             continue
 
         manifest_url = f"https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/{manifest_name}"
+
 
         catalog_entries.append({
             "name": movie["name"],
