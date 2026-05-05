@@ -1,0 +1,41 @@
+name: Video Pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - input_movies.json
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        pip install requests
+
+    - name: Install curl
+      run: sudo apt-get install -y curl
+
+    - name: Run Python script
+      run: |
+        python script.py
+
+    - name: Commit and push results
+      run: |
+        git config user.name "github-actions"
+        git config user.email "actions@github.com"
+
+        git add movies.json movies/
+        git commit -m "Auto update movies" || echo "No changes"
+
+        git push
