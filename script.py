@@ -20,8 +20,8 @@ MOVIES_FILE = os.path.join(PROJECT_DIR, "movies.json")
 BOT_TOKEN = "8651470873:AAEMq3GGKk9FBG60O6Vd_eH5V-1x0S6Pqc4"
 CHAT_ID = "@stream1806"  # or channel ID
 
-MAX_JSON_SIZE = 1 * 1024 * 1024
-INITIAL_CHUNK_SIZE = 700 * 1024
+MAX_JSON_SIZE = 20 * 1024 * 1024   # increased for larger chunks
+INITIAL_CHUNK_SIZE = 4 * 1024 * 1024  # 🔥 4 MB chunks
 
 # ======================
 # CREATE FOLDERS
@@ -66,9 +66,12 @@ def encode(data):
 # ======================
 # CREATE JSON CHUNKS
 # ======================
-def create_chunks():
+def create_chunks(movie_name):
     files = []
     index = 0
+
+    # clean movie name
+    safe_name = movie_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
 
     with open(TEMP_VIDEO, "rb") as f:
         while True:
@@ -87,7 +90,7 @@ def create_chunks():
             json_str = json.dumps(data, separators=(",", ":"))
             size = len(json_str.encode())
 
-            # ensure <1MB
+            # ensure under limit
             while size > MAX_JSON_SIZE:
                 chunk = chunk[:int(len(chunk) * 0.8)]
                 encoded = encode(chunk)
@@ -95,7 +98,7 @@ def create_chunks():
                 json_str = json.dumps(data, separators=(",", ":"))
                 size = len(json_str.encode())
 
-            filename = f"chunk_{index:04d}.json"
+            filename = f"{safe_name}-chunk_{index:04d}.json"
             filepath = os.path.join(JSON_DIR, filename)
 
             with open(filepath, "w") as jf:
@@ -160,8 +163,8 @@ def process_movie(movie):
         print("⛔ Skipping movie")
         return None
 
-    # chunk
-    json_files = create_chunks()
+    # chunk creation
+    json_files = create_chunks(name)
 
     # upload
     chunks = []
@@ -228,7 +231,6 @@ if __name__ == "__main__":
             continue
 
         manifest_url = f"https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/{manifest_name}"
-
 
         catalog_entries.append({
             "name": movie["name"],
