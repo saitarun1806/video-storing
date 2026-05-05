@@ -1,0 +1,11 @@
+{
+  "movie": "Sample Movie",
+  "year": 2026,
+  "chunkDuration": 5,
+  "chunks": [
+    {
+      "order": 0,
+      "file_id": "BQACAgUAAyEGAATkByHiAAIDIWn6CAu_h_CP__xo8FzHUWs2fAp-AAIDJwACKlLRV2WIPwUwAZWAOwQ"
+    }
+  ]
+}

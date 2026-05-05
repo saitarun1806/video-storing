@@ -1,0 +1,14 @@
+{
+  "movies": [
+    {
+      "name": "Lee Cronin_s The Mummy ",
+      "year": 2026,
+      "manifest": "https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/lee_cronin_s_the_mummy__2026.json"
+    },
+    {
+      "name": "Sample Movie",
+      "year": 2026,
+      "manifest": "https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/sample_movie_2026.json"
+    }
+  ]
+}
