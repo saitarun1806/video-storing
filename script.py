@@ -10,12 +10,13 @@ import time
 # ======================
 INPUT_FILE = "input_movies.json"
 
-PROJECT_DIR = "project"
+PROJECT_DIR = "."
 TEMP_VIDEO = os.path.join(PROJECT_DIR, "temp.mp4")
 
 JSON_DIR = os.path.join(PROJECT_DIR, "json_chunks")
-MOVIES_DIR = os.path.join(PROJECT_DIR, "movies")
-MOVIES_FILE = os.path.join(PROJECT_DIR, "movies.json")
+
+MOVIES_DIR = "movies"
+MOVIES_FILE = "movies.json"
 
 BOT_TOKEN = "8651470873:AAEMq3GGKk9FBG60O6Vd_eH5V-1x0S6Pqc4"
 CHAT_ID = "@stream1806"  # or channel ID
