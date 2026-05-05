@@ -30,12 +30,23 @@ jobs:
       run: |
         python script.py
 
+    # 🔍 Debug (see what files are created)
+    - name: Debug files
+      run: |
+        echo "==== FILE STRUCTURE ===="
+        ls -R
+
+    # 🔥 Safe commit (no error if files missing)
     - name: Commit and push results
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
 
-        git add movies.json movies/
+        # add only if exists
+        [ -f movies.json ] && git add movies.json
+        [ -d movies ] && git add movies/
+
+        # commit safely
         git commit -m "Auto update movies" || echo "No changes"
 
         git push
