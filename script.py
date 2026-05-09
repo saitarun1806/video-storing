@@ -1,7 +1,12 @@
+
+# ======================================================
+# PART 1
+# CONFIG + HELPERS + DOWNLOAD + MEDIA EXTRACTION
+# ======================================================
+
 import os
 import re
 import json
-import math
 import base64
 import gzip
 import time
@@ -17,41 +22,48 @@ INPUT_FILE = "input_movies.json"
 
 # Output paths
 PROJECT_DIR = "."
-TEMP_SOURCE = os.path.join(PROJECT_DIR, "temp_source.bin")  # raw download
-TEMP_VIDEO = os.path.join(PROJECT_DIR, "temp.mp4")          # browser-ready MP4
+TEMP_SOURCE = os.path.join(PROJECT_DIR, "temp_source.bin")
+WORK_DIR = os.path.join(PROJECT_DIR, "work")
 JSON_DIR = "json_chunks"
 MOVIES_DIR = "movies"
 MOVIES_FILE = "movies.json"
 
-# Telegram
+# Telegram upload bots (round-robin)
 UPLOAD_BOTS = [
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
 ]
+
+# Dedicated bot token used in your Cloudflare Worker for getFile
+GETFILE_BOT = "BOT_TOKEN_4"
+
 CHAT_ID = "@stream1806"
 
 # Chunking
-CHUNK_SIZE = 2 * 1024 * 1024           # 2 MB binary chunks
-MAX_JSON_SIZE = 20 * 1024 * 1024       # Telegram JSON file size safety
+CHUNK_SIZE = 2 * 1024 * 1024      # 2 MB binary chunks
+MAX_JSON_SIZE = 20 * 1024 * 1024  # Telegram safety limit
 
 # Upload parallelism
-MAX_UPLOAD_WORKERS = 4                 # 4 uploads in parallel
+MAX_UPLOAD_WORKERS = 4
 UPLOAD_RETRIES = 3
+CHUNK_UPLOAD_DELAY = 0.1
 
-# GitHub raw base URL
+# Download settings
+DOWNLOAD_TIMEOUT = 60
+
+# GitHub raw URL base
 GITHUB_RAW_BASE = (
     "https://raw.githubusercontent.com/"
     "saitarun1806/video-storing/main"
 )
 
-# Request settings
-DOWNLOAD_TIMEOUT = 60
-CHUNK_UPLOAD_DELAY = 0.1
+# Validate configuration
+if not UPLOAD_BOTS:
+    raise ValueError("UPLOAD_BOTS cannot be empty")
 
-# ======================================================
-# SETUP
-# ======================================================
+# Create folders
+os.makedirs(WORK_DIR, exist_ok=True)
 os.makedirs(JSON_DIR, exist_ok=True)
 os.makedirs(MOVIES_DIR, exist_ok=True)
 
@@ -66,26 +78,47 @@ def clean_name(name: str) -> str:
     return name.strip("_")
 
 
+def safe_remove(path: str):
+    if os.path.exists(path):
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+
+
+def reset_work_dirs():
+    safe_remove(TEMP_SOURCE)
+    safe_remove(WORK_DIR)
+    safe_remove(JSON_DIR)
+
+    os.makedirs(WORK_DIR, exist_ok=True)
+    os.makedirs(JSON_DIR, exist_ok=True)
+
+
 # ======================================================
-# DOWNLOAD VIDEO
+# DOWNLOAD USING CURL
 # ======================================================
 def download_video(url: str) -> bool:
     print(f"⬇️ Downloading: {url}")
 
     for attempt in range(1, 4):
         try:
-            with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
-                r.raise_for_status()
-
-                with open(TEMP_SOURCE, "wb") as f:
-                    for chunk in r.iter_content(1024 * 1024):
-                        if chunk:
-                            f.write(chunk)
+            subprocess.run(
+                [
+                    "curl",
+                    "-L",
+                    "--fail",
+                    url,
+                    "-o",
+                    TEMP_SOURCE,
+                ],
+                check=True,
+            )
 
             print("✅ Downloaded source file")
             return True
 
-        except Exception as e:
+        except subprocess.CalledProcessError as e:
             print(f"⚠️ Download attempt {attempt} failed: {e}")
             time.sleep(3)
 
@@ -94,76 +127,153 @@ def download_video(url: str) -> bool:
 
 
 # ======================================================
-# RE-ENCODE TO BROWSER-COMPATIBLE MP4
-# PRESERVES ALL AUDIO + SUBTITLE STREAMS USING -map 0
+# EXTRACT VIDEO ONLY
+# Uses stream copy for maximum speed
 # ======================================================
-def reencode_video() -> bool:
-    print("🎞️ Re-encoding to browser-compatible MP4 (preserving all streams)...")
+def extract_video_only() -> str:
+    video_path = os.path.join(WORK_DIR, "video.mp4")
 
-    if os.path.exists(TEMP_VIDEO):
-        os.remove(TEMP_VIDEO)
+    print("🎬 Extracting video-only stream...")
 
     cmd = [
-    "ffmpeg",
-    "-y",
-    "-i", TEMP_SOURCE,
-    "-map", "0",
-    "-c", "copy",
-    "-movflags", "+faststart",
-    TEMP_VIDEO,
-]
+        "ffmpeg",
+        "-y",
+        "-i",
+        TEMP_SOURCE,
+        "-map",
+        "0:v:0",
+        "-c:v",
+        "copy",
+        "-an",
+        "-movflags",
+        "+faststart",
+        video_path,
+    ]
 
-    try:
-        subprocess.run(cmd, check=True)
-        print("✅ Re-encoded to temp.mp4")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ FFmpeg failed: {e}")
-        return False
+    subprocess.run(cmd, check=True)
+
+    print("✅ video.mp4 created")
+    return video_path
 
 
 # ======================================================
-# MEDIA INFO (duration, streams)
+# GET AUDIO TRACK INFORMATION
+# ======================================================
+def get_audio_tracks() -> list:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index,codec_name,channels:stream_tags=language,title",
+        "-of",
+        "json",
+        TEMP_SOURCE,
+    ]
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    data = json.loads(result.stdout)
+    tracks = []
+
+    for i, stream in enumerate(data.get("streams", [])):
+        tags = stream.get("tags", {})
+
+        tracks.append({
+            "audio_index": i,
+            "stream_index": stream.get("index"),
+            "language": tags.get("language", f"audio{i}"),
+            "title": tags.get("title", ""),
+            "codec": stream.get("codec_name"),
+            "channels": stream.get("channels"),
+        })
+
+    return tracks
+
+
+# ======================================================
+# EXTRACT EACH AUDIO TRACK SEPARATELY
+# ======================================================
+def extract_audio_tracks() -> list:
+    tracks = get_audio_tracks()
+    extracted = []
+
+    for track in tracks:
+        idx = track["audio_index"]
+        output = os.path.join(WORK_DIR, f"audio_{idx}.m4a")
+
+        print(
+            f"🎵 Extracting audio {idx} "
+            f"({track['language'] or 'unknown'})..."
+        )
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            TEMP_SOURCE,
+            "-map",
+            f"0:a:{idx}",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            output,
+        ]
+
+        subprocess.run(cmd, check=True)
+
+        extracted.append({
+            "path": output,
+            "audio_index": idx,
+            "language": track["language"],
+            "title": track["title"],
+            "codec": "aac",
+            "channels": track["channels"],
+        })
+
+        print(f"✅ {os.path.basename(output)} created")
+
+    return extracted
+
+# ======================================================
+# PART 2
+# CHUNKING + TELEGRAM UPLOAD + MANIFESTS + MAIN
+# ======================================================
+
+# ======================================================
+# GET GENERAL MEDIA INFO
 # ======================================================
 def get_media_info(path: str) -> dict:
     cmd = [
         "ffprobe",
         "-v", "error",
         "-show_entries",
-        "format=duration,size:stream=index,codec_type,codec_name,channels:stream_tags=language,title",
+        "format=duration,size",
         "-of", "json",
         path,
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    info = json.loads(result.stdout)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
-    duration = float(info.get("format", {}).get("duration", 0) or 0)
-    size = int(info.get("format", {}).get("size", 0) or 0)
-
-    audio_tracks = []
-    subtitle_tracks = []
-
-    for stream in info.get("streams", []):
-        tags = stream.get("tags", {})
-        entry = {
-            "index": stream.get("index"),
-            "codec": stream.get("codec_name"),
-            "language": tags.get("language", "und"),
-            "title": tags.get("title", ""),
-        }
-
-        if stream.get("codec_type") == "audio":
-            entry["channels"] = stream.get("channels")
-            audio_tracks.append(entry)
-        elif stream.get("codec_type") == "subtitle":
-            subtitle_tracks.append(entry)
+    data = json.loads(result.stdout)
+    fmt = data.get("format", {})
 
     return {
-        "duration": duration,
-        "size": size,
-        "audioTracks": audio_tracks,
-        "subtitleTracks": subtitle_tracks,
+        "duration": float(fmt.get("duration", 0) or 0),
+        "size": int(fmt.get("size", 0) or 0),
     }
 
 
@@ -171,17 +281,18 @@ def get_media_info(path: str) -> dict:
 # ENCODE CHUNK AS gzip + base64
 # ======================================================
 def encode_chunk(data: bytes) -> str:
-    return base64.b64encode(gzip.compress(data)).decode("utf-8")
+    return base64.b64encode(
+        gzip.compress(data)
+    ).decode("utf-8")
 
 
 # ======================================================
-# CREATE 2 MB JSON CHUNKS
+# CREATE JSON CHUNKS FOR ANY FILE
 # ======================================================
-def create_chunks(movie_name: str):
-    safe_name = clean_name(movie_name)
+def create_chunks(file_path: str, prefix: str):
     files = []
 
-    with open(TEMP_VIDEO, "rb") as f:
+    with open(file_path, "rb") as f:
         index = 0
         offset = 0
 
@@ -200,18 +311,32 @@ def create_chunks(movie_name: str):
                 "data": encoded,
             }
 
-            json_str = json.dumps(payload, separators=(",", ":"))
-            size_bytes = len(json_str.encode("utf-8"))
+            json_str = json.dumps(
+                payload,
+                separators=(",", ":")
+            )
+
+            size_bytes = len(
+                json_str.encode("utf-8")
+            )
 
             if size_bytes > MAX_JSON_SIZE:
                 raise RuntimeError(
-                    f"Chunk JSON too large ({size_bytes} bytes). Reduce CHUNK_SIZE."
+                    f"Chunk JSON too large "
+                    f"({size_bytes} bytes)"
                 )
 
-            filename = f"{safe_name}-chunk_{index:05d}.json"
-            filepath = os.path.join(JSON_DIR, filename)
+            filename = f"{prefix}-chunk_{index:05d}.json"
+            filepath = os.path.join(
+                JSON_DIR,
+                filename
+            )
 
-            with open(filepath, "w", encoding="utf-8") as jf:
+            with open(
+                filepath,
+                "w",
+                encoding="utf-8"
+            ) as jf:
                 jf.write(json_str)
 
             files.append({
@@ -221,7 +346,10 @@ def create_chunks(movie_name: str):
                 "chunkSize": len(chunk),
             })
 
-            print(f"✅ {filename} ({len(chunk)/1024/1024:.2f} MB binary)")
+            print(
+                f"✅ {filename} "
+                f"({len(chunk)/1024/1024:.2f} MB)"
+            )
 
             offset += len(chunk)
             index += 1
@@ -233,7 +361,9 @@ def create_chunks(movie_name: str):
 # MULTI-BOT ROUND ROBIN
 # ======================================================
 def get_upload_bot(index: int) -> str:
-    return UPLOAD_BOTS[index % len(UPLOAD_BOTS)]
+    return UPLOAD_BOTS[
+        index % len(UPLOAD_BOTS)
+    ]
 
 
 # ======================================================
@@ -244,15 +374,26 @@ def upload_single(file_info: dict) -> dict:
     order = file_info["order"]
 
     bot_token = get_upload_bot(order)
-    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
 
-    for attempt in range(1, UPLOAD_RETRIES + 1):
+    url = (
+        f"https://api.telegram.org/"
+        f"bot{bot_token}/sendDocument"
+    )
+
+    for attempt in range(
+        1,
+        UPLOAD_RETRIES + 1
+    ):
         try:
             with open(file_path, "rb") as f:
                 res = requests.post(
                     url,
-                    data={"chat_id": CHAT_ID},
-                    files={"document": f},
+                    data={
+                        "chat_id": CHAT_ID
+                    },
+                    files={
+                        "document": f
+                    },
                     timeout=120,
                 )
 
@@ -260,7 +401,8 @@ def upload_single(file_info: dict) -> dict:
 
             if data.get("ok"):
                 print(
-                    f"🚀 Uploaded chunk {order} using bot "
+                    f"🚀 Uploaded chunk {order} "
+                    f"using bot "
                     f"#{(order % len(UPLOAD_BOTS)) + 1}"
                 )
 
@@ -269,16 +411,27 @@ def upload_single(file_info: dict) -> dict:
                     "offset": file_info["offset"],
                     "chunkSize": file_info["chunkSize"],
                     "file_id": data["result"]["document"]["file_id"],
-                    "bot_index": order % len(UPLOAD_BOTS),
+                    "bot_index": (
+                        order % len(UPLOAD_BOTS)
+                    ),
                 }
 
-            print(f"❌ Telegram error for chunk {order}: {data}")
+            print(
+                f"❌ Telegram error "
+                f"for chunk {order}: {data}"
+            )
 
         except Exception as e:
-            print(f"⚠️ Upload attempt {attempt} failed for chunk {order}: {e}")
+            print(
+                f"⚠️ Upload attempt "
+                f"{attempt} failed "
+                f"for chunk {order}: {e}"
+            )
             time.sleep(2)
 
-    raise RuntimeError(f"Failed to upload chunk {order}")
+    raise RuntimeError(
+        f"Failed to upload chunk {order}"
+    )
 
 
 # ======================================================
@@ -287,15 +440,102 @@ def upload_single(file_info: dict) -> dict:
 def upload_chunks_parallel(chunk_files):
     results = []
 
-    with ThreadPoolExecutor(max_workers=MAX_UPLOAD_WORKERS) as executor:
-        futures = [executor.submit(upload_single, info) for info in chunk_files]
+    with ThreadPoolExecutor(
+        max_workers=MAX_UPLOAD_WORKERS
+    ) as executor:
 
-        for future in as_completed(futures):
-            results.append(future.result())
-            time.sleep(CHUNK_UPLOAD_DELAY)
+        futures = [
+            executor.submit(
+                upload_single,
+                info
+            )
+            for info in chunk_files
+        ]
 
-    results.sort(key=lambda x: x["order"])
+        for future in as_completed(
+            futures
+        ):
+            results.append(
+                future.result()
+            )
+            time.sleep(
+                CHUNK_UPLOAD_DELAY
+            )
+
+    results.sort(
+        key=lambda x: x["order"]
+    )
+
     return results
+
+
+# ======================================================
+# BUILD COMPONENT MANIFEST
+# ======================================================
+def build_component_manifest(
+    component_type: str,
+    info: dict,
+    chunks: list,
+    extra: dict = None
+):
+    total_chunks = len(chunks)
+    duration = info["duration"]
+
+    seconds_per_chunk = (
+        duration / total_chunks
+        if total_chunks else 0
+    )
+
+    manifest = {
+        "type": component_type,
+        "mimeType": (
+            "video/mp4"
+            if component_type == "video"
+            else "audio/mp4"
+        ),
+        "encoding": "gzip+base64",
+        "chunkSize": CHUNK_SIZE,
+        "totalSize": info["size"],
+        "duration": duration,
+        "totalChunks": total_chunks,
+        "estimatedChunkDuration": (
+            seconds_per_chunk
+        ),
+        "seek": {
+            "type": "estimated",
+            "secondsPerChunk": (
+                seconds_per_chunk
+            ),
+            "formula": (
+                "chunkIndex = "
+                "floor(seconds / "
+                "secondsPerChunk)"
+            ),
+        },
+        "chunks": chunks,
+    }
+
+    if extra:
+        manifest.update(extra)
+
+    return manifest
+
+
+# ======================================================
+# SAVE JSON
+# ======================================================
+def save_json(path: str, data: dict):
+    with open(
+        path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            data,
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
 
 
 # ======================================================
@@ -306,74 +546,185 @@ def process_movie(movie: dict):
     year = movie["year"]
     url = movie["url"]
 
-    print(f"\n🎬 Processing: {name} ({year})")
+    print(
+        f"\\n🎬 Processing: "
+        f"{name} ({year})"
+    )
 
     safe = clean_name(name)
-    manifest_name = f"{safe}_{year}.json"
-    manifest_path = os.path.join(MOVIES_DIR, manifest_name)
+    reset_work_dirs()
 
-    # Cleanup previous temp files
-    for temp in [TEMP_SOURCE, TEMP_VIDEO]:
-        if os.path.exists(temp):
-            os.remove(temp)
-
-    # Download
+    # 1. Download source
     if not download_video(url):
         print("⛔ Skipping movie")
         return None
 
-    # Re-encode
-    if not reencode_video():
-        print("⛔ Re-encode failed")
-        return None
+    # 2. Extract video-only
+    video_path = extract_video_only()
 
-    # Media info
-    info = get_media_info(TEMP_VIDEO)
+    # 3. Extract all audio tracks
+    audio_files = extract_audio_tracks()
 
-    # Chunk creation
-       # Chunk creation
-    chunk_files = create_chunks(name)
+    # --------------------------
+    # VIDEO MANIFEST
+    # --------------------------
+    print("📦 Chunking video...")
+    video_chunk_files = create_chunks(
+        video_path,
+        f"{safe}-video"
+    )
 
-    # Upload in parallel with multiple bots
-    uploaded_chunks = upload_chunks_parallel(chunk_files)
+    print("📤 Uploading video...")
+    video_uploaded = upload_chunks_parallel(
+        video_chunk_files
+    )
 
-    # Estimated seek metadata
-    total_chunks = len(uploaded_chunks)
-    duration = info["duration"]
-    estimated_chunk_duration = duration / total_chunks if total_chunks else 0
+    video_info = get_media_info(
+        video_path
+    )
 
-    # Manifest
-    manifest = {
+    video_manifest = (
+        build_component_manifest(
+            "video",
+            video_info,
+            video_uploaded,
+        )
+    )
+
+    video_manifest_name = (
+        f"{safe}_{year}_video.json"
+    )
+
+    save_json(
+        os.path.join(
+            MOVIES_DIR,
+            video_manifest_name
+        ),
+        video_manifest,
+    )
+
+    # --------------------------
+    # AUDIO MANIFESTS
+    # --------------------------
+    master_audio_tracks = []
+
+    for audio in audio_files:
+        idx = audio["audio_index"]
+
+        print(
+            f"📦 Chunking audio "
+            f"{idx}..."
+        )
+
+        audio_chunk_files = (
+            create_chunks(
+                audio["path"],
+                f"{safe}-audio_{idx}"
+            )
+        )
+
+        print(
+            f"📤 Uploading audio "
+            f"{idx}..."
+        )
+
+        audio_uploaded = (
+            upload_chunks_parallel(
+                audio_chunk_files
+            )
+        )
+
+        audio_info = get_media_info(
+            audio["path"]
+        )
+
+        audio_manifest = (
+            build_component_manifest(
+                "audio",
+                audio_info,
+                audio_uploaded,
+                extra={
+                    "language": (
+                        audio["language"]
+                    ),
+                    "title": (
+                        audio["title"]
+                    ),
+                    "channels": (
+                        audio["channels"]
+                    ),
+                },
+            )
+        )
+
+        audio_manifest_name = (
+            f"{safe}_{year}"
+            f"_audio_{idx}.json"
+        )
+
+        save_json(
+            os.path.join(
+                MOVIES_DIR,
+                audio_manifest_name
+            ),
+            audio_manifest,
+        )
+
+        master_audio_tracks.append({
+            "audio_index": idx,
+            "language": (
+                audio["language"]
+            ),
+            "title": (
+                audio["title"]
+            ),
+            "channels": (
+                audio["channels"]
+            ),
+            "manifest": (
+                f"{GITHUB_RAW_BASE}/"
+                f"movies/"
+                f"{audio_manifest_name}"
+            ),
+        })
+
+    # --------------------------
+    # MASTER MOVIE MANIFEST
+    # --------------------------
+    master_manifest = {
         "movie": name,
         "year": year,
-        "mimeType": "video/mp4",
-        "encoding": "gzip+base64",
-        "chunkSize": CHUNK_SIZE,
-        "totalSize": info["size"],
-        "duration": duration,
-        "totalChunks": total_chunks,
-        "estimatedChunkDuration": estimated_chunk_duration,
-        "audioTracks": info["audioTracks"],
-        "subtitleTracks": info["subtitleTracks"],
-        "seek": {
-            "type": "estimated",
-            "secondsPerChunk": estimated_chunk_duration,
-            "formula": "chunkIndex = floor(seconds / secondsPerChunk)"
-        },
-        "chunks": uploaded_chunks,
+        "videoManifest": (
+            f"{GITHUB_RAW_BASE}/"
+            f"movies/"
+            f"{video_manifest_name}"
+        ),
+        "audioTracks": (
+            master_audio_tracks
+        ),
     }
 
-    # Save manifest
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    master_manifest_name = (
+        f"{safe}_{year}.json"
+    )
 
-    print(f"📝 Saved → {manifest_path}")
+    save_json(
+        os.path.join(
+            MOVIES_DIR,
+            master_manifest_name
+        ),
+        master_manifest,
+    )
 
-    # Optional cleanup of temporary JSON chunk files
-    shutil.rmtree(JSON_DIR)
-    os.makedirs(JSON_DIR, exist_ok=True)
+    print(
+        f"📝 Saved → "
+        f"{master_manifest_name}"
+    )
 
-    return manifest_name
+    # Cleanup temp files
+    reset_work_dirs()
+
+    return master_manifest_name
 
 
 # ======================================================
@@ -382,72 +733,113 @@ def process_movie(movie: dict):
 def update_catalog(entries):
     catalog = {"movies": []}
 
-    # Load existing movies.json if available
-    if os.path.exists(MOVIES_FILE):
+    if os.path.exists(
+        MOVIES_FILE
+    ):
         try:
-            with open(MOVIES_FILE, "r", encoding="utf-8") as f:
+            with open(
+                MOVIES_FILE,
+                "r",
+                encoding="utf-8"
+            ) as f:
                 catalog = json.load(f)
         except Exception:
-            catalog = {"movies": []}
+            catalog = {
+                "movies": []
+            }
 
-    # Create lookup to avoid duplicates
     existing = {
-        (item.get("name"), item.get("year")): item
-        for item in catalog.get("movies", [])
+        (
+            item.get("name"),
+            item.get("year")
+        ): item
+        for item in catalog.get(
+            "movies",
+            []
+        )
     }
 
-    # Update or insert entries
     for entry in entries:
         if entry:
-            existing[(entry["name"], entry["year"])] = entry
+            existing[
+                (
+                    entry["name"],
+                    entry["year"]
+                )
+            ] = entry
 
-    # Convert back to list and sort
-    catalog["movies"] = list(existing.values())
-    catalog["movies"].sort(
-        key=lambda x: (x["name"].lower(), x["year"])
+    catalog["movies"] = list(
+        existing.values()
     )
 
-    # Save movies.json
-    with open(MOVIES_FILE, "w", encoding="utf-8") as f:
-        json.dump(catalog, f, indent=2, ensure_ascii=False)
+    catalog["movies"].sort(
+        key=lambda x: (
+            x["name"].lower(),
+            x["year"]
+        )
+    )
 
-    print("📚 movies.json updated")
+    save_json(
+        MOVIES_FILE,
+        catalog
+    )
+
+    print(
+        "📚 movies.json updated"
+    )
 
 
 # ======================================================
 # MAIN
 # ======================================================
 def main():
-    print("🚀 Starting pipeline...")
+    print(
+        "🚀 Starting pipeline..."
+    )
 
-    # Load input file
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
-        movies_data = json.load(f)["movies"]
+    if not os.path.exists(
+        INPUT_FILE
+    ):
+        raise FileNotFoundError(
+            f"{INPUT_FILE} not found"
+        )
+
+    with open(
+        INPUT_FILE,
+        "r",
+        encoding="utf-8"
+    ) as f:
+        movies_data = json.load(
+            f
+        )["movies"]
 
     catalog_entries = []
 
-    # Process each movie
     for movie in movies_data:
-        manifest_name = process_movie(movie)
+        manifest_name = (
+            process_movie(movie)
+        )
 
-        # Skip failed movies
         if not manifest_name:
             continue
 
-        # Create GitHub raw URL for manifest
-        manifest_url = f"{GITHUB_RAW_BASE}/movies/{manifest_name}"
+        manifest_url = (
+            f"{GITHUB_RAW_BASE}/"
+            f"movies/"
+            f"{manifest_name}"
+        )
 
-        # Add to catalog
         catalog_entries.append({
             "name": movie["name"],
             "year": movie["year"],
             "manifest": manifest_url,
         })
 
-    # Update movies.json
-    update_catalog(catalog_entries)
+    update_catalog(
+        catalog_entries
+    )
 
-    print("\n🎉 DONE!")
+    print("\\n🎉 DONE!")
 
 
 # ======================================================
@@ -455,4 +847,4 @@ def main():
 # ======================================================
 if __name__ == "__main__":
     main()
-   
+
