@@ -25,9 +25,9 @@ MOVIES_FILE = "movies.json"
 
 # Telegram
 UPLOAD_BOTS = [
-    "BOT_TOKEN_1",
-    "BOT_TOKEN_2",
-    "BOT_TOKEN_3",
+    "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
+    "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
+    "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
 ]
 CHAT_ID = "@stream1806"
 
