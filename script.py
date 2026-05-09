@@ -104,19 +104,14 @@ def reencode_video() -> bool:
         os.remove(TEMP_VIDEO)
 
     cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", TEMP_SOURCE,
-        "-map", "0",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-c:s", "mov_text",
-        "-movflags", "+faststart",
-        TEMP_VIDEO,
-    ]
+    "ffmpeg",
+    "-y",
+    "-i", TEMP_SOURCE,
+    "-map", "0",
+    "-c", "copy",
+    "-movflags", "+faststart",
+    TEMP_VIDEO,
+]
 
     try:
         subprocess.run(cmd, check=True)
