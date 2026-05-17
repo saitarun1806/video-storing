@@ -42,21 +42,35 @@ jobs:
         ls -R
 
     # 🔥 Safe commit (no error if files missing)
-    - name: Commit and Push Changes
+    - name: Commit and Push Movies Only
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
     
-        # Pull latest changes first
-        git fetch origin main
-        git pull --rebase origin main
-    
-        # Stage ONLY movies.json and movies folder
+        # Stage ONLY the files you want to commit
         git add movies.json
         git add movies/
     
-        # Commit only if these files changed
-        git diff --cached --quiet || git commit -m "Auto update movies"
+        # If nothing changed, stop here
+        if git diff --cached --quiet; then
+          echo "No changes to commit."
+          exit 0
+        fi
     
-        # Push to GitHub
+        # Stash staged changes temporarily
+        git stash push --keep-index -m "movies-update"
+    
+        # Get latest remote changes
+        git fetch origin main
+        git pull --rebase origin main
+    
+        # Restore stashed changes
+        git stash pop || true
+    
+        # Re-stage only target files
+        git add movies.json
+        git add movies/
+    
+        # Commit and push
+        git commit -m "Auto update movies"
         git push origin main
