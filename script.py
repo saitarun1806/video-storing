@@ -32,6 +32,9 @@ UPLOAD_BOTS = [
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
+    "8809309930:AAGq_qEv3e3TjKwU2lQf9pINVFxIV5KLYok",
+    "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
+    
 ]
 CHAT_ID = "@stream1806" # or channel ID
 # ======================
@@ -44,7 +47,7 @@ INITIAL_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB binary chunks
 # PARALLEL UPLOAD SETTINGS
 # ======================
 # Recommended: 6-8 workers per bot to avoid Telegram 429 errors
-MAX_WORKERS_PER_BOT = 10
+MAX_WORKERS_PER_BOT = 6
 
 # ======================
 # CREATE FOLDERS
