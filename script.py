@@ -1,12 +1,10 @@
 # ======================================================
 # PART 1
-# CONFIG + HELPERS + DOWNLOAD + CHUNK CREATION
+# CONFIG + HELPERS + DOWNLOAD + HLS CREATION
 # ======================================================
 
 import os
 import json
-import base64
-import gzip
 import requests
 import time
 import re
@@ -23,13 +21,12 @@ INPUT_FILE = "input_movies.json"
 PROJECT_DIR = "."
 TEMP_VIDEO = os.path.join(PROJECT_DIR, "temp.mp4")
 
-JSON_DIR = os.path.join(PROJECT_DIR, "json_chunks")
+SEGMENTS_DIR = os.path.join(PROJECT_DIR, "hls_segments")
 MOVIES_DIR = "movies"
 MOVIES_FILE = "movies.json"
 
 # ======================
-# TELEGRAM CONFIG (MULTI-BOT)
-# Replace these with NEW bot tokens
+# TELEGRAM CONFIG
 # ======================
 UPLOAD_BOTS = [
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
@@ -46,35 +43,35 @@ UPLOAD_BOTS = [
     "7557078677:AAGQjGgkl7DzFGGKCguVm1mqu48X3oOpmjs",
     
 ]
-CHAT_ID = "@stream1806" # or channel ID
+
+CHAT_ID = "@stream1806"
+
 # ======================
-# CHUNK SETTINGS
+# WORKER URL
 # ======================
-MAX_JSON_SIZE = 20 * 1024 * 1024      # 20 MB max JSON size
-INITIAL_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB binary chunks
+WORKER_URL = "https://frosty-snow-1291.database1806.workers.dev"
+
+# ======================
+# HLS SETTINGS
+# ======================
+SEGMENT_DURATION = 5  # seconds
 
 # ======================
 # PARALLEL UPLOAD SETTINGS
 # ======================
-# Recommended: 6-8 workers per bot to avoid Telegram 429 errors
 MAX_WORKERS_PER_BOT = 6
 
 # ======================
 # CREATE FOLDERS
 # ======================
 os.makedirs(PROJECT_DIR, exist_ok=True)
-os.makedirs(JSON_DIR, exist_ok=True)
+os.makedirs(SEGMENTS_DIR, exist_ok=True)
 os.makedirs(MOVIES_DIR, exist_ok=True)
 
 # ======================
 # HELPERS
 # ======================
 def clean_name(name):
-    """
-    Convert movie name to a safe filename.
-    Example:
-        'The Mummy (2026)' -> 'the_mummy_2026'
-    """
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9]+", "_", name)
     name = re.sub(r"_+", "_", name)
@@ -85,9 +82,6 @@ def clean_name(name):
 # DOWNLOAD VIDEO
 # ======================
 def download_video(url):
-    """
-    Download source video to TEMP_VIDEO with retries.
-    """
     print(f"⬇️ Downloading: {url}")
 
     for attempt in range(3):
@@ -113,242 +107,99 @@ def download_video(url):
 
 
 # ======================
-# ENCODE DATA
+# CREATE HLS FILES
 # ======================
-def encode(data):
+def create_hls(movie_name):
     """
-    Compress binary data with gzip and encode to base64.
-    """
-    compressed = gzip.compress(data)
-    return base64.b64encode(compressed).decode("utf-8")
-
-
-
-# ======================
-# CREATE JSON CHUNKS
-# ======================
-# Add these imports near the top of your file
-import subprocess
-import tempfile
-import shutil
-
-
-# ======================
-# CREATE JSON CHUNKS
-# ======================
-def create_chunks(movie_name):
-    """
-    Split TEMP_VIDEO into independently playable MP4 chunks
-    (~4 MB each), then convert each MP4 chunk to gzip+base64 JSON.
-
-    This version:
-    - Uses FFmpeg stream copy (very fast, no re-encoding)
-    - Keeps only:
-        - Video stream (0:v:0)
-        - AAC stereo audio stream if available (0:a:1?)
-    - Skips:
-        - Subtitles (SubRip/SRT)
-        - Unsupported streams
-        - AC3 5.1 audio
-    - Produces standalone fragmented MP4 files
-    - Converts each MP4 file into JSON
-
-    Each resulting JSON chunk contains one independently playable MP4.
+    Create:
+      - playlist.m3u8
+      - segment000.ts
+      - segment001.ts
+      - ...
     """
 
-    files = []
     safe_name = clean_name(movie_name)
 
-    # Temporary directory for MP4 parts
-    segment_dir = tempfile.mkdtemp(prefix="mp4_parts_")
+    # Clean segment folder
+    if os.path.exists(SEGMENTS_DIR):
+        shutil.rmtree(SEGMENTS_DIR)
 
-    try:
-        print("🎬 Splitting video into ~4 MB MP4 parts...")
+    os.makedirs(SEGMENTS_DIR, exist_ok=True)
 
-        # ---------------------------------------
-        # Get total duration using ffprobe
-        # ---------------------------------------
-        probe = subprocess.run(
-            [
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                TEMP_VIDEO
-            ],
-            capture_output=True,
-            text=True,
-            check=True
-        )
+    playlist_path = os.path.join(SEGMENTS_DIR, "playlist.m3u8")
+    segment_pattern = os.path.join(SEGMENTS_DIR, "segment%05d.ts")
 
-        total_duration = float(probe.stdout.strip())
-        total_size = os.path.getsize(TEMP_VIDEO)
+    print("🎬 Creating HLS segments...")
 
-        # ---------------------------------------
-        # Calculate approximate segment duration
-        # ---------------------------------------
-        target_size = 4 * 1024 * 1024  # 4 MB
-        num_parts = max(1, int(total_size / target_size))
-        segment_time = max(1, total_duration / num_parts)
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i", TEMP_VIDEO,
 
-        print(f"📦 File size: {total_size / (1024**3):.2f} GB")
-        print(f"⏱ Duration: {total_duration:.2f} sec")
-        print(f"🔢 Estimated parts: {num_parts}")
-        print(f"⏳ Segment time: {segment_time:.4f} sec")
+            # Re-encode for browser compatibility
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
 
-        # ---------------------------------------
-        # Output file pattern
-        # ---------------------------------------
-        segment_pattern = os.path.join(
-            segment_dir,
-            "part_%04d.mp4"
-        )
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ac", "2",
 
-        # ---------------------------------------
-        # Split video into fragmented MP4 chunks
-        # ---------------------------------------
-        print("🚀 Running FFmpeg...")
+            # HLS settings
+            "-f", "hls",
+            "-hls_time", str(SEGMENT_DURATION),
+            "-hls_playlist_type", "vod",
+            "-hls_segment_filename", segment_pattern,
 
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i", TEMP_VIDEO,
+            playlist_path
+        ],
+        capture_output=True,
+        text=True
+    )
 
-                # Select video stream
-                "-map", "0:v:0",
+    if result.returncode != 0:
+        print(result.stderr)
+        raise RuntimeError("FFmpeg HLS creation failed")
 
-                # Select AAC stereo audio if available
-                # (skips AC3 and subtitles)
-                "-map", "0:a:1?",
+    print("✅ HLS created")
 
-                # Copy streams (no re-encoding)
-                "-c", "copy",
+    segment_files = sorted(
+        os.path.join(SEGMENTS_DIR, f)
+        for f in os.listdir(SEGMENTS_DIR)
+        if f.endswith(".ts")
+    )
 
-                # Segment muxer
-                "-f", "segment",
-                "-segment_time", str(segment_time),
-                "-segment_time_delta", "0.5",
-                "-reset_timestamps", "1",
+    if not segment_files:
+        raise RuntimeError("No HLS segments were created")
 
-                # Make each segment independently playable
-                "-movflags",
-                "frag_keyframe+empty_moov+default_base_moof",
+    print(f"📦 Created {len(segment_files)} segments")
 
-                # Output pattern
-                segment_pattern
-            ],
-            capture_output=True,
-            text=True
-        )
+    return playlist_path, segment_files
 
-        # ---------------------------------------
-        # Check FFmpeg result
-        # ---------------------------------------
-        if result.returncode != 0:
-            print("❌ FFmpeg failed")
-            print(result.stderr)
-            raise RuntimeError(
-                f"FFmpeg segmentation failed "
-                f"with exit code {result.returncode}"
-            )
-
-        print("✅ MP4 splitting complete")
-
-        # ---------------------------------------
-        # List generated MP4 parts
-        # ---------------------------------------
-        part_files = sorted(
-            f for f in os.listdir(segment_dir)
-            if f.endswith(".mp4")
-        )
-
-        if not part_files:
-            raise RuntimeError("No MP4 parts were created")
-
-        print(f"📦 Generated {len(part_files)} MP4 parts")
-
-        # ---------------------------------------
-        # Convert each MP4 part to JSON
-        # ---------------------------------------
-        for index, part_name in enumerate(part_files):
-            part_path = os.path.join(segment_dir, part_name)
-
-            # Read MP4 data
-            with open(part_path, "rb") as f:
-                mp4_data = f.read()
-
-            # Encode as gzip + base64
-            encoded = encode(mp4_data)
-
-            # JSON payload
-            payload = {
-                "order": index,
-                "encoding": "gzip+base64",
-                "segmentType": "mp4",
-                "duration": segment_time,
-                "data": encoded
-            }
-
-            json_str = json.dumps(
-                payload,
-                separators=(",", ":")
-            )
-
-            # Save JSON file
-            filename = f"{safe_name}-chunk_{index:04d}.json"
-            filepath = os.path.join(JSON_DIR, filename)
-
-            with open(filepath, "w", encoding="utf-8") as jf:
-                jf.write(json_str)
-
-            files.append(filepath)
-
-            part_size_mb = len(mp4_data) / (1024 * 1024)
-
-            print(
-                f"✅ {filename} "
-                f"({part_size_mb:.2f} MB MP4)"
-            )
-
-        print(
-            f"🎉 Created {len(files)} independently playable "
-            f"MP4-based JSON chunks"
-        )
-
-        return files
-
-    finally:
-        # Remove temporary MP4 parts
-        shutil.rmtree(segment_dir, ignore_errors=True)
 # ======================================================
 # PART 2
-# MULTI-BOT UPLOAD + GUARANTEED RETRIES + MANIFEST + CATALOG + MAIN
+# MULTI-BOT UPLOAD + PLAYLIST GENERATION + CATALOG + MAIN
 # ======================================================
 
 # ======================
 # SELECT BOT (ROUND ROBIN)
 # ======================
 def get_upload_bot(index):
-    """
-    Chunk 0 -> Bot 1
-    Chunk 1 -> Bot 2
-    Chunk 2 -> Bot 3
-    Chunk 3 -> Bot 1
-    """
     return UPLOAD_BOTS[index % len(UPLOAD_BOTS)]
 
 
 # ======================
-# UPLOAD SINGLE CHUNK
+# UPLOAD SINGLE FILE
 # ======================
-def upload(file_path, chunk_index):
+def upload(file_path, index):
     """
-    Upload one JSON chunk to Telegram.
+    Upload one file (.ts segment) to Telegram.
     Handles retries and Telegram 429 rate limits.
-    Returns Telegram file_id on success, otherwise None.
+    Returns Telegram file_id on success.
     """
-    bot_token = get_upload_bot(chunk_index)
+    bot_token = get_upload_bot(index)
     api_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
 
     for attempt in range(3):
@@ -358,29 +209,30 @@ def upload(file_path, chunk_index):
                     api_url,
                     data={"chat_id": CHAT_ID},
                     files={"document": f},
-                    timeout=120
+                    timeout=300
                 )
 
             data = response.json()
 
             # Success
             if data.get("ok"):
-                bot_number = (chunk_index % len(UPLOAD_BOTS)) + 1
+                bot_number = (index % len(UPLOAD_BOTS)) + 1
 
                 print(
-                    f"🚀 Uploaded chunk "
-                    f"{chunk_index} "
+                    f"🚀 Uploaded segment "
+                    f"{index} "
                     f"using bot #{bot_number}"
                 )
 
                 return data["result"]["document"]["file_id"]
 
-            # Telegram rate limit
+            # Telegram error
             print(
-                f"❌ Upload error for chunk "
-                f"{chunk_index}: {data}"
+                f"❌ Upload error for segment "
+                f"{index}: {data}"
             )
 
+            # Rate limit
             if data.get("error_code") == 429:
                 retry_after = (
                     data.get("parameters", {})
@@ -398,70 +250,45 @@ def upload(file_path, chunk_index):
             print(
                 f"⚠️ Upload retry "
                 f"{attempt + 1} for "
-                f"chunk {chunk_index}: {e}"
+                f"segment {index}: {e}"
             )
-
             time.sleep(2)
 
     return None
 
 
 # ======================
-# UPLOAD ALL CHUNKS (GUARANTEED)
+# UPLOAD ALL FILES (GUARANTEED)
 # ======================
-# ======================
-# UPLOAD ALL CHUNKS (PENDING LIST METHOD)
-# ======================
-def upload_all_chunks(json_files):
+def upload_all_files(file_paths):
     """
-    Upload all chunks and keep retrying until EVERY chunk is uploaded.
-
-    Logic:
-    1. Create a list containing all chunk numbers.
-       Example: [0, 1, 2, 3, 4, ...]
-    2. When a chunk uploads successfully, remove its number from the list.
-    3. If a chunk fails, keep its number in the list.
-    4. After one upload round, retry ONLY the remaining chunk numbers.
-    5. Continue until the list becomes empty.
-
-    This guarantees:
-    - No chunk is missed
-    - Failed chunks are retried indefinitely
-    - Process ends only when all chunks are uploaded
+    Upload all segments and retry until every file is uploaded.
     """
-
-    total_files = len(json_files)
+    total_files = len(file_paths)
     total_workers = MAX_WORKERS_PER_BOT * len(UPLOAD_BOTS)
 
-    print(f"🚀 Starting parallel uploads with {total_workers} workers...")
-    print(f"📦 Total chunks to upload: {total_files}")
+    print(f"🚀 Starting uploads with {total_workers} workers...")
+    print(f"📦 Total segments: {total_files}")
 
-    # Dictionary to store successful uploads
     uploaded = {}
-
-    # LIST OF CHUNK NUMBERS STILL TO UPLOAD
-    # Example: [0, 1, 2, 3, 4, ...]
-    pending_chunks = list(range(total_files))
-
+    pending = list(range(total_files))
     round_number = 1
 
-    # Continue until the list becomes empty
-    while pending_chunks:
+    while pending:
         print(f"\n🔄 Upload Round {round_number}")
-        print(f"⏳ Remaining chunks: {len(pending_chunks)}")
-        print(f"📋 Pending list: {pending_chunks[:20]}{' ...' if len(pending_chunks) > 20 else ''}")
+        print(f"⏳ Remaining segments: {len(pending)}")
 
-        # Use only as many workers as needed
-        workers = min(total_workers, len(pending_chunks))
-
-        # Temporary list for chunks that fail this round
-        failed_chunks = []
+        failed = []
+        workers = min(total_workers, len(pending))
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit only pending chunks
             futures = {
-                executor.submit(upload, json_files[index], index): index
-                for index in pending_chunks
+                executor.submit(
+                    upload,
+                    file_paths[index],
+                    index
+                ): index
+                for index in pending
             }
 
             for future in as_completed(futures):
@@ -471,50 +298,72 @@ def upload_all_chunks(json_files):
                     file_id = future.result()
 
                     if file_id:
-                        # Save successful upload info
                         uploaded[index] = {
-                            "order": index,
-                            "file_id": file_id,
-                            "bot_index": index % len(UPLOAD_BOTS)
+                            "index": index,
+                            "file_id": file_id
                         }
-
-                        # Success -> do NOT add back to pending list
-                        print(f"✅ Removed chunk {index} from pending list")
                     else:
-                        # Failed -> keep for next round
-                        failed_chunks.append(index)
+                        failed.append(index)
 
                 except Exception as e:
-                    print(f"❌ Failed chunk {index}: {e}")
-                    failed_chunks.append(index)
+                    print(f"❌ Failed segment {index}: {e}")
+                    failed.append(index)
 
-        # Replace pending list with only failed chunks
-        pending_chunks = sorted(failed_chunks)
+        pending = sorted(failed)
 
         print(
             f"✅ Uploaded: {len(uploaded)}/{total_files} | "
-            f"Remaining in pending list: {len(pending_chunks)}"
+            f"Remaining: {len(pending)}"
         )
 
-        # Wait before retrying remaining chunks
-        if pending_chunks:
-            print("⏳ Waiting 5 seconds before retrying remaining chunks...")
+        if pending:
+            print("⏳ Waiting 5 seconds before retry...")
             time.sleep(5)
 
         round_number += 1
 
-    # Build ordered chunk list
-    chunks = [uploaded[i] for i in sorted(uploaded.keys())]
+    print(f"\n🎉 All {total_files} segments uploaded successfully!")
 
-    # Final verification
-    if len(chunks) != total_files:
-        raise Exception(
-            f"Upload incomplete! Expected {total_files}, got {len(chunks)}"
+    return [uploaded[i] for i in sorted(uploaded.keys())]
+
+
+# ======================
+# CREATE FINAL PLAYLIST
+# ======================
+def build_final_playlist(movie_name, uploaded_segments):
+    """
+    Generate a new .m3u8 playlist that points to
+    Cloudflare Worker URLs using Telegram file_ids.
+    """
+    safe_name = clean_name(movie_name)
+    playlist_name = f"{safe_name}.m3u8"
+    playlist_path = os.path.join(MOVIES_DIR, playlist_name)
+
+    lines = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:3",
+        f"#EXT-X-TARGETDURATION:{SEGMENT_DURATION}",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+    ]
+
+    for segment in uploaded_segments:
+        file_id = segment["file_id"]
+
+        lines.append(f"#EXTINF:{SEGMENT_DURATION:.1f},")
+        lines.append(
+            f"{WORKER_URL}/file_by_id/"
+            f"{requests.utils.quote(file_id, safe='')}"
         )
 
-    print(f"\n🎉 All {total_files} chunks uploaded successfully!")
-    print("📋 Pending list is empty.")
-    return chunks
+    lines.append("#EXT-X-ENDLIST")
+
+    with open(playlist_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    print(f"📝 Saved playlist → {playlist_path}")
+
+    return playlist_name
 
 
 # ======================
@@ -527,10 +376,6 @@ def process_movie(movie):
 
     print(f"\n🎬 Processing: {name} ({year})")
 
-    safe = clean_name(name)
-    manifest_name = f"{safe}_{year}.json"
-    manifest_path = os.path.join(MOVIES_DIR, manifest_name)
-
     # Remove previous temp video
     if os.path.exists(TEMP_VIDEO):
         os.remove(TEMP_VIDEO)
@@ -540,36 +385,19 @@ def process_movie(movie):
         print("⛔ Skipping movie")
         return None
 
-    # Create JSON chunk files
-    json_files = create_chunks(name)
+    # Create HLS playlist and segments
+    _, segment_files = create_hls(name)
 
-    # Guaranteed upload of all chunks
-    chunks = upload_all_chunks(json_files)
+    # Upload all segments
+    uploaded_segments = upload_all_files(segment_files)
 
-    if not chunks:
-        print("❌ No chunks uploaded successfully")
-        return None
+    # Build final playlist pointing to Worker URLs
+    playlist_name = build_final_playlist(
+        name,
+        uploaded_segments
+    )
 
-    # Create manifest
-    manifest = {
-        "movie": name,
-        "year": year,
-        "chunkDuration": 5,
-        "totalChunks": len(chunks),
-        "chunks": chunks
-    }
-
-    # Save manifest
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(
-            manifest,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
-
-    print(f"📝 Saved → movies/{manifest_name}")
-    return manifest_name
+    return playlist_name
 
 
 # ======================
@@ -618,7 +446,7 @@ def update_catalog(entries):
 # MAIN
 # ======================
 if __name__ == "__main__":
-    print("🚀 Starting pipeline...")
+    print("🚀 Starting HLS pipeline...")
 
     # Load input_movies.json
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
@@ -628,26 +456,26 @@ if __name__ == "__main__":
 
     # Process each movie
     for movie in movies_data:
-        manifest_name = process_movie(movie)
+        playlist_name = process_movie(movie)
 
-        if not manifest_name:
+        if not playlist_name:
             continue
 
-        # Update this to your actual GitHub repository path
-        manifest_url = (
+        # GitHub raw URL for playlist
+        playlist_url = (
             "https://raw.githubusercontent.com/"
             "saitarun1806/"
             "video-storing/main/"
-            f"movies/{manifest_name}"
+            f"movies/{playlist_name}"
         )
 
         catalog_entries.append({
             "name": movie["name"],
             "year": movie["year"],
-            "manifest": manifest_url
+            "playlist": playlist_url
         })
 
-    # Update master catalog
+    # Update movies.json
     update_catalog(catalog_entries)
 
     print("\n🎉 DONE!")
