@@ -10,6 +10,9 @@ import gzip
 import requests
 import time
 import re
+import subprocess
+import tempfile
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ======================
@@ -125,43 +128,101 @@ def encode(data):
 # ======================
 def create_chunks(movie_name):
     """
-    Split TEMP_VIDEO into compressed JSON chunks.
-    Each chunk contains:
-        {
-            "order": 0,
-            "encoding": "gzip+base64",
-            "data": "..."
-        }
-    """
-    files = []
-    index = 0
+    Split TEMP_VIDEO into independently playable MP4 parts
+    of approximately 4 MB each, then convert each MP4 part
+    into gzip + base64 JSON.
 
+    This allows the browser to:
+    - Play after downloading the first chunk
+    - Download remaining chunks in the background
+    """
+
+    files = []
     safe_name = clean_name(movie_name)
 
-    with open(TEMP_VIDEO, "rb") as f:
-        while True:
-            chunk = f.read(INITIAL_CHUNK_SIZE)
-            if not chunk:
-                break
+    # Temporary folder for MP4 segments
+    segment_dir = tempfile.mkdtemp(prefix="mp4_parts_")
 
-            encoded = encode(chunk)
+    try:
+        print("🎬 Splitting video into ~4 MB MP4 parts...")
+
+        # Get total duration using ffprobe
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                TEMP_VIDEO
+            ],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        total_duration = float(result.stdout.strip())
+        total_size = os.path.getsize(TEMP_VIDEO)
+
+        target_size = 4 * 1024 * 1024  # 4 MB target
+        num_parts = max(1, int(total_size / target_size))
+        segment_time = max(1, total_duration / num_parts)
+
+        print(f"📦 File size: {total_size / (1024**3):.2f} GB")
+        print(f"⏱ Duration: {total_duration:.2f} sec")
+        print(f"🔢 Estimated parts: {num_parts}")
+        print(f"⏳ Segment time: {segment_time:.2f} sec")
+
+        # Output pattern
+        segment_pattern = os.path.join(
+            segment_dir,
+            "part_%04d.mp4"
+        )
+
+        # Split video WITHOUT re-encoding (very fast)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", TEMP_VIDEO,
+                "-c", "copy",
+                "-map", "0",
+                "-f", "segment",
+                "-segment_time", str(segment_time),
+                "-reset_timestamps", "1",
+                "-movflags", "+faststart",
+                segment_pattern
+            ],
+            check=True
+        )
+
+        print("✅ MP4 splitting complete")
+
+        # Find generated MP4 parts
+        part_files = sorted(
+            f for f in os.listdir(segment_dir)
+            if f.endswith(".mp4")
+        )
+
+        # Convert each MP4 part to JSON
+        for index, part_name in enumerate(part_files):
+            part_path = os.path.join(segment_dir, part_name)
+
+            with open(part_path, "rb") as f:
+                mp4_data = f.read()
+
+            encoded = encode(mp4_data)
 
             payload = {
                 "order": index,
                 "encoding": "gzip+base64",
+                "segmentType": "mp4",
                 "data": encoded
             }
 
-            json_str = json.dumps(payload, separators=(",", ":"))
-            size = len(json_str.encode("utf-8"))
-
-            # Ensure JSON stays under MAX_JSON_SIZE
-            while size > MAX_JSON_SIZE:
-                chunk = chunk[:int(len(chunk) * 0.8)]
-                encoded = encode(chunk)
-                payload["data"] = encoded
-                json_str = json.dumps(payload, separators=(",", ":"))
-                size = len(json_str.encode("utf-8"))
+            json_str = json.dumps(
+                payload,
+                separators=(",", ":")
+            )
 
             filename = f"{safe_name}-chunk_{index:04d}.json"
             filepath = os.path.join(JSON_DIR, filename)
@@ -171,14 +232,19 @@ def create_chunks(movie_name):
 
             files.append(filepath)
 
+            part_size_mb = len(mp4_data) / (1024 * 1024)
+
             print(
                 f"✅ {filename} "
-                f"({size / 1024:.1f} KB)"
+                f"({part_size_mb:.2f} MB MP4)"
             )
 
-            index += 1
+        print(f"🎉 Created {len(files)} MP4-based JSON chunks")
+        return files
 
-    return files
+    finally:
+        # Clean temporary segment directory
+        shutil.rmtree(segment_dir, ignore_errors=True)
 # ======================================================
 # PART 2
 # MULTI-BOT UPLOAD + GUARANTEED RETRIES + MANIFEST + CATALOG + MAIN
