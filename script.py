@@ -123,31 +123,37 @@ def encode(data):
     return base64.b64encode(compressed).decode("utf-8")
 
 
+
 # ======================
 # CREATE JSON CHUNKS
 # ======================
 def create_chunks(movie_name):
     """
-    Split TEMP_VIDEO into independently playable MP4 parts
-    of approximately 4 MB each, then convert each MP4 part
-    into gzip + base64 JSON.
+    Split TEMP_VIDEO into independently playable MP4 segments
+    of approximately 4 MB each, then convert each segment into
+    gzip + base64 JSON.
 
-    This allows the browser to:
-    - Play after downloading the first chunk
-    - Download remaining chunks in the background
+    Each generated chunk:
+    - Is a valid standalone fragmented MP4 file
+    - Can be decoded and played independently
+    - Can be streamed immediately in the browser
+
+    No re-encoding is performed, so processing is very fast.
     """
 
     files = []
     safe_name = clean_name(movie_name)
 
-    # Temporary folder for MP4 segments
+    # Temporary directory for MP4 segments
     segment_dir = tempfile.mkdtemp(prefix="mp4_parts_")
 
     try:
         print("🎬 Splitting video into ~4 MB MP4 parts...")
 
-        # Get total duration using ffprobe
-        result = subprocess.run(
+        # ---------------------------------------
+        # Get video duration using ffprobe
+        # ---------------------------------------
+        probe = subprocess.run(
             [
                 "ffprobe",
                 "-v", "error",
@@ -160,62 +166,111 @@ def create_chunks(movie_name):
             check=True
         )
 
-        total_duration = float(result.stdout.strip())
+        total_duration = float(probe.stdout.strip())
         total_size = os.path.getsize(TEMP_VIDEO)
 
-        target_size = 4 * 1024 * 1024  # 4 MB target
+        # ---------------------------------------
+        # Calculate approximate segment duration
+        # so each output file is around 4 MB
+        # ---------------------------------------
+        target_size = 4 * 1024 * 1024  # 4 MB
         num_parts = max(1, int(total_size / target_size))
         segment_time = max(1, total_duration / num_parts)
 
         print(f"📦 File size: {total_size / (1024**3):.2f} GB")
         print(f"⏱ Duration: {total_duration:.2f} sec")
         print(f"🔢 Estimated parts: {num_parts}")
-        print(f"⏳ Segment time: {segment_time:.2f} sec")
+        print(f"⏳ Segment time: {segment_time:.4f} sec")
 
-        # Output pattern
+        # ---------------------------------------
+        # Output filename pattern
+        # ---------------------------------------
         segment_pattern = os.path.join(
             segment_dir,
             "part_%04d.mp4"
         )
 
-        # Split video WITHOUT re-encoding (very fast)
-        subprocess.run(
+        # ---------------------------------------
+        # Split video into fragmented MP4 parts
+        # ---------------------------------------
+        print("🚀 Running FFmpeg...")
+
+        result = subprocess.run(
             [
                 "ffmpeg",
                 "-y",
                 "-i", TEMP_VIDEO,
+
+                # Copy streams (no re-encoding)
                 "-c", "copy",
                 "-map", "0",
+
+                # Segment muxer
                 "-f", "segment",
                 "-segment_time", str(segment_time),
+
+                # Allow slight timing tolerance
+                "-segment_time_delta", "0.5",
+
+                # Reset timestamps in each part
                 "-reset_timestamps", "1",
-                "-movflags", "+faststart",
+
+                # Make each segment independently playable
+                "-movflags",
+                "frag_keyframe+empty_moov+default_base_moof",
+
+                # Output pattern
                 segment_pattern
             ],
-            check=True
+            capture_output=True,
+            text=True
         )
+
+        # ---------------------------------------
+        # Check FFmpeg result
+        # ---------------------------------------
+        if result.returncode != 0:
+            print("❌ FFmpeg failed")
+            print(result.stderr)
+            raise RuntimeError(
+                f"FFmpeg segmentation failed "
+                f"with exit code {result.returncode}"
+            )
 
         print("✅ MP4 splitting complete")
 
+        # ---------------------------------------
         # Find generated MP4 parts
+        # ---------------------------------------
         part_files = sorted(
             f for f in os.listdir(segment_dir)
             if f.endswith(".mp4")
         )
 
+        if not part_files:
+            raise RuntimeError("No MP4 parts were created")
+
+        print(f"📦 Generated {len(part_files)} MP4 parts")
+
+        # ---------------------------------------
         # Convert each MP4 part to JSON
+        # ---------------------------------------
         for index, part_name in enumerate(part_files):
             part_path = os.path.join(segment_dir, part_name)
 
+            # Read MP4 bytes
             with open(part_path, "rb") as f:
                 mp4_data = f.read()
 
+            # Encode as gzip + base64
             encoded = encode(mp4_data)
 
+            # Build JSON payload
             payload = {
                 "order": index,
                 "encoding": "gzip+base64",
                 "segmentType": "mp4",
+                "duration": segment_time,
                 "data": encoded
             }
 
@@ -224,6 +279,7 @@ def create_chunks(movie_name):
                 separators=(",", ":")
             )
 
+            # Save JSON file
             filename = f"{safe_name}-chunk_{index:04d}.json"
             filepath = os.path.join(JSON_DIR, filename)
 
@@ -239,11 +295,15 @@ def create_chunks(movie_name):
                 f"({part_size_mb:.2f} MB MP4)"
             )
 
-        print(f"🎉 Created {len(files)} MP4-based JSON chunks")
+        print(
+            f"🎉 Created {len(files)} independently playable "
+            f"MP4-based JSON chunks"
+        )
+
         return files
 
     finally:
-        # Clean temporary segment directory
+        # Remove temporary MP4 files
         shutil.rmtree(segment_dir, ignore_errors=True)
 # ======================================================
 # PART 2
