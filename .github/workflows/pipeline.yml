@@ -47,17 +47,16 @@ jobs:
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
     
-        # Stage all changes
-        git add .
-    
-        # Commit only if there are changes
-        git diff --cached --quiet || git commit -m "Auto update movies"
-    
-        # Fetch latest remote changes
+        # Pull latest changes first
         git fetch origin main
-    
-        # Rebase local commit on top of remote main
         git pull --rebase origin main
     
-        # Push updated branch
+        # Stage ONLY movies.json and movies folder
+        git add movies.json
+        git add movies/
+    
+        # Commit only if these files changed
+        git diff --cached --quiet || git commit -m "Auto update movies"
+    
+        # Push to GitHub
         git push origin main
