@@ -44,7 +44,7 @@ INITIAL_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB binary chunks
 # PARALLEL UPLOAD SETTINGS
 # ======================
 # Recommended: 6-8 workers per bot to avoid Telegram 429 errors
-MAX_WORKERS_PER_BOT = 8
+MAX_WORKERS_PER_BOT = 10
 
 # ======================
 # CREATE FOLDERS
