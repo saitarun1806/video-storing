@@ -1,5 +1,6 @@
 # ======================================================
-# TELEGRAM MULTI-BOT PARALLEL VIDEO UPLOADER
+# PART 1
+# CONFIG + HELPERS + DOWNLOAD + CHUNK CREATION
 # ======================================================
 
 import os
@@ -25,7 +26,7 @@ MOVIES_FILE = "movies.json"
 
 # ======================
 # TELEGRAM CONFIG (MULTI-BOT)
-# Replace with your own bot tokens
+# Replace these with NEW bot tokens
 # ======================
 UPLOAD_BOTS = [
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
@@ -33,17 +34,17 @@ UPLOAD_BOTS = [
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
 ]
 CHAT_ID = "@stream1806" # or channel ID
-
 # ======================
 # CHUNK SETTINGS
 # ======================
-MAX_JSON_SIZE = 20 * 1024 * 1024      # 20 MB safe JSON size
+MAX_JSON_SIZE = 20 * 1024 * 1024      # 20 MB max JSON size
 INITIAL_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB binary chunks
 
 # ======================
 # PARALLEL UPLOAD SETTINGS
 # ======================
-MAX_WORKERS_PER_BOT = 20  # 20 concurrent uploads per bot
+# Recommended: 6-8 workers per bot to avoid Telegram 429 errors
+MAX_WORKERS_PER_BOT = 8
 
 # ======================
 # CREATE FOLDERS
@@ -52,17 +53,28 @@ os.makedirs(PROJECT_DIR, exist_ok=True)
 os.makedirs(JSON_DIR, exist_ok=True)
 os.makedirs(MOVIES_DIR, exist_ok=True)
 
-
+# ======================
+# HELPERS
+# ======================
 def clean_name(name):
-    """Convert movie name to a safe filename."""
+    """
+    Convert movie name to a safe filename.
+    Example:
+        'The Mummy (2026)' -> 'the_mummy_2026'
+    """
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9]+", "_", name)
     name = re.sub(r"_+", "_", name)
     return name.strip("_")
 
 
+# ======================
+# DOWNLOAD VIDEO
+# ======================
 def download_video(url):
-    """Download source video to TEMP_VIDEO."""
+    """
+    Download source video to TEMP_VIDEO with retries.
+    """
     print(f"⬇️ Downloading: {url}")
 
     for attempt in range(3):
@@ -87,16 +99,33 @@ def download_video(url):
     return False
 
 
+# ======================
+# ENCODE DATA
+# ======================
 def encode(data):
-    """Compress binary data with gzip and encode as base64."""
+    """
+    Compress binary data with gzip and encode to base64.
+    """
     compressed = gzip.compress(data)
     return base64.b64encode(compressed).decode("utf-8")
 
 
+# ======================
+# CREATE JSON CHUNKS
+# ======================
 def create_chunks(movie_name):
-    """Split TEMP_VIDEO into compressed JSON chunk files."""
+    """
+    Split TEMP_VIDEO into compressed JSON chunks.
+    Each chunk contains:
+        {
+            "order": 0,
+            "encoding": "gzip+base64",
+            "data": "..."
+        }
+    """
     files = []
     index = 0
+
     safe_name = clean_name(movie_name)
 
     with open(TEMP_VIDEO, "rb") as f:
@@ -116,6 +145,7 @@ def create_chunks(movie_name):
             json_str = json.dumps(payload, separators=(",", ":"))
             size = len(json_str.encode("utf-8"))
 
+            # Ensure JSON stays under MAX_JSON_SIZE
             while size > MAX_JSON_SIZE:
                 chunk = chunk[:int(len(chunk) * 0.8)]
                 encoded = encode(chunk)
@@ -130,92 +160,195 @@ def create_chunks(movie_name):
                 jf.write(json_str)
 
             files.append(filepath)
-            print(f"✅ {filename} ({size / 1024:.1f} KB)")
+
+            print(
+                f"✅ {filename} "
+                f"({size / 1024:.1f} KB)"
+            )
+
             index += 1
 
     return files
+# ======================================================
+# PART 2
+# MULTI-BOT UPLOAD + GUARANTEED RETRIES + MANIFEST + CATALOG + MAIN
+# ======================================================
 
-
+# ======================
+# SELECT BOT (ROUND ROBIN)
+# ======================
 def get_upload_bot(index):
-    """Select bot using round-robin."""
+    """
+    Chunk 0 -> Bot 1
+    Chunk 1 -> Bot 2
+    Chunk 2 -> Bot 3
+    Chunk 3 -> Bot 1
+    """
     return UPLOAD_BOTS[index % len(UPLOAD_BOTS)]
 
 
+# ======================
+# UPLOAD SINGLE CHUNK
+# ======================
 def upload(file_path, chunk_index):
-    """Upload one chunk file to Telegram."""
+    """
+    Upload one JSON chunk to Telegram.
+    Handles retries and Telegram 429 rate limits.
+    Returns Telegram file_id on success, otherwise None.
+    """
     bot_token = get_upload_bot(chunk_index)
-    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
 
     for attempt in range(3):
         try:
             with open(file_path, "rb") as f:
-                res = requests.post(
-                    url,
+                response = requests.post(
+                    api_url,
                     data={"chat_id": CHAT_ID},
                     files={"document": f},
                     timeout=120
                 )
 
-            data = res.json()
+            data = response.json()
 
+            # Success
             if data.get("ok"):
                 bot_number = (chunk_index % len(UPLOAD_BOTS)) + 1
-                print(f"🚀 Uploaded chunk {chunk_index} using bot #{bot_number}")
+
+                print(
+                    f"🚀 Uploaded chunk "
+                    f"{chunk_index} "
+                    f"using bot #{bot_number}"
+                )
+
                 return data["result"]["document"]["file_id"]
 
-            print(f"❌ Upload error for chunk {chunk_index}: {data}")
+            # Telegram rate limit
+            print(
+                f"❌ Upload error for chunk "
+                f"{chunk_index}: {data}"
+            )
 
             if data.get("error_code") == 429:
-                retry_after = data.get("parameters", {}).get("retry_after", 5)
-                print(f"⏳ Rate limited. Waiting {retry_after} seconds...")
+                retry_after = (
+                    data.get("parameters", {})
+                    .get("retry_after", 5)
+                )
+
+                print(
+                    f"⏳ Rate limited. "
+                    f"Waiting {retry_after} seconds..."
+                )
+
                 time.sleep(retry_after)
 
         except Exception as e:
-            print(f"⚠️ Upload retry {attempt + 1} for chunk {chunk_index}: {e}")
+            print(
+                f"⚠️ Upload retry "
+                f"{attempt + 1} for "
+                f"chunk {chunk_index}: {e}"
+            )
+
             time.sleep(2)
 
     return None
 
 
+# ======================
+# UPLOAD ALL CHUNKS (GUARANTEED)
+# ======================
 def upload_all_chunks(json_files):
     """
-    Upload all chunks in parallel.
-    Total concurrent workers = MAX_WORKERS_PER_BOT * number of bots.
+    Upload all chunks in parallel and GUARANTEE that every chunk
+    is uploaded successfully before continuing.
+
+    Features:
+    - Parallel uploads
+    - Automatic retries for failed chunks
+    - Handles Telegram 429 rate limits
+    - Re-uploads any missing chunks
+    - Final verification that all chunks exist
     """
-    chunks = []
+    total_files = len(json_files)
     total_workers = MAX_WORKERS_PER_BOT * len(UPLOAD_BOTS)
 
     print(f"🚀 Starting parallel uploads with {total_workers} workers...")
+    print(f"📦 Total chunks to upload: {total_files}")
 
-    with ThreadPoolExecutor(max_workers=total_workers) as executor:
-        futures = {
-            executor.submit(upload, file_path, i): i
-            for i, file_path in enumerate(json_files)
-        }
+    # Successful uploads indexed by chunk number
+    uploaded = {}
 
-        for future in as_completed(futures):
-            i = futures[future]
+    # Initial pending list
+    pending = list(enumerate(json_files))
 
-            try:
-                file_id = future.result()
+    round_number = 1
 
-                if file_id:
-                    chunks.append({
-                        "order": i,
-                        "file_id": file_id,
-                        "bot_index": i % len(UPLOAD_BOTS)
-                    })
+    # Continue until every chunk is uploaded
+    while pending:
+        print(f"\n🔄 Upload Round {round_number}")
+        print(f"⏳ Remaining chunks: {len(pending)}")
 
-            except Exception as e:
-                print(f"❌ Failed chunk {i}: {e}")
+        workers = min(total_workers, len(pending))
 
-    chunks.sort(key=lambda x: x["order"])
-    print(f"✅ Uploaded {len(chunks)} chunks successfully")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(upload, file_path, index): (index, file_path)
+                for index, file_path in pending
+            }
+
+            # Reset pending; failed uploads will be added back
+            pending = []
+
+            for future in as_completed(futures):
+                index, file_path = futures[future]
+
+                try:
+                    file_id = future.result()
+
+                    if file_id:
+                        uploaded[index] = {
+                            "order": index,
+                            "file_id": file_id,
+                            "bot_index": index % len(UPLOAD_BOTS)
+                        }
+                    else:
+                        # Upload returned None → retry in next round
+                        pending.append((index, file_path))
+
+                except Exception as e:
+                    print(f"❌ Failed chunk {index}: {e}")
+                    pending.append((index, file_path))
+
+        print(
+            f"✅ Uploaded: {len(uploaded)}/{total_files} | "
+            f"Remaining: {len(pending)}"
+        )
+
+        # Wait before retrying failed chunks
+        if pending:
+            print("⏳ Waiting 5 seconds before retrying missing chunks...")
+            time.sleep(5)
+
+        round_number += 1
+
+    # Build ordered list
+    chunks = [uploaded[i] for i in sorted(uploaded.keys())]
+
+    # Final verification
+    if len(chunks) != total_files:
+        raise Exception(
+            f"Upload incomplete! "
+            f"Expected {total_files}, got {len(chunks)}"
+        )
+
+    print(f"\n🎉 All {total_files} chunks uploaded successfully!")
     return chunks
 
 
+# ======================
+# PROCESS ONE MOVIE
+# ======================
 def process_movie(movie):
-    """Process a single movie."""
     name = movie["name"]
     year = movie["year"]
     source_url = movie["url"]
@@ -226,20 +359,26 @@ def process_movie(movie):
     manifest_name = f"{safe}_{year}.json"
     manifest_path = os.path.join(MOVIES_DIR, manifest_name)
 
+    # Remove previous temp video
     if os.path.exists(TEMP_VIDEO):
         os.remove(TEMP_VIDEO)
 
+    # Download source video
     if not download_video(source_url):
         print("⛔ Skipping movie")
         return None
 
+    # Create JSON chunk files
     json_files = create_chunks(name)
+
+    # Guaranteed upload of all chunks
     chunks = upload_all_chunks(json_files)
 
     if not chunks:
         print("❌ No chunks uploaded successfully")
         return None
 
+    # Create manifest
     manifest = {
         "movie": name,
         "year": year,
@@ -248,21 +387,30 @@ def process_movie(movie):
         "chunks": chunks
     }
 
+    # Save manifest
     with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+        json.dump(
+            manifest,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
 
     print(f"📝 Saved → movies/{manifest_name}")
     return manifest_name
 
 
+# ======================
+# UPDATE movies.json
+# ======================
 def update_catalog(entries):
-    """Update master movies.json catalog."""
     if os.path.exists(MOVIES_FILE):
         with open(MOVIES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = {"movies": []}
 
+    # Prevent duplicates
     existing = {
         (item.get("name"), item.get("year")): item
         for item in data["movies"]
@@ -273,28 +421,47 @@ def update_catalog(entries):
             existing[(entry["name"], entry["year"])] = entry
 
     data["movies"] = list(existing.values())
-    data["movies"].sort(key=lambda x: (x["name"].lower(), x["year"]))
 
+    # Sort alphabetically
+    data["movies"].sort(
+        key=lambda x: (
+            x["name"].lower(),
+            x["year"]
+        )
+    )
+
+    # Save movies.json
     with open(MOVIES_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(
+            data,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
 
     print("📚 movies.json updated")
 
 
+# ======================
+# MAIN
+# ======================
 if __name__ == "__main__":
     print("🚀 Starting pipeline...")
 
+    # Load input_movies.json
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
         movies_data = json.load(f)["movies"]
 
     catalog_entries = []
 
+    # Process each movie
     for movie in movies_data:
         manifest_name = process_movie(movie)
 
         if not manifest_name:
             continue
 
+        # Update this to your actual GitHub repository path
         manifest_url = (
             "https://raw.githubusercontent.com/"
             "saitarun1806/"
@@ -302,12 +469,13 @@ if __name__ == "__main__":
             f"movies/{manifest_name}"
         )
 
-
         catalog_entries.append({
             "name": movie["name"],
             "year": movie["year"],
             "manifest": manifest_url
         })
 
+    # Update master catalog
     update_catalog(catalog_entries)
+
     print("\n🎉 DONE!")
