@@ -1,6 +1,10 @@
 {
   "movies": [
-    
+    {
+      "name": "Dhurandhar The Revenge",
+      "year": 2026,
+      "manifest": "https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/dhurandhar_the_revenge_2026.json"
+    },
     {
       "name": "Justice for Jeni",
       "year": 2026,
