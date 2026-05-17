@@ -36,6 +36,7 @@ UPLOAD_BOTS = [
     "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
     "8637056729:AAG7X4jOJRuA_t97x39W1bxz8NorIl-Aw-c",
     "8859983169:AAEx_7GkzxwrGlH33-I4Sq5ExzCFNe5lNmE",
+    "6824663359:AAFJeyqimtZGUl5KifGnXnwbtJ6r2HO_1d0",
     
 ]
 CHAT_ID = "@stream1806" # or channel ID
