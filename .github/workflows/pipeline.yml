@@ -42,16 +42,22 @@ jobs:
         ls -R
 
     # 🔥 Safe commit (no error if files missing)
-    - name: Commit and push results
+    - name: Commit and Push Changes
       run: |
         git config user.name "github-actions"
-        git config user.email "actions@github.com"
-
-        # add only if exists
-        [ -f movies.json ] && git add movies.json
-        [ -d movies ] && git add movies/
-
-        # commit safely
-        git commit -m "Auto update movies" || echo "No changes"
-
-        git push
+        git config user.email "github-actions@github.com"
+    
+        # Stage all changes
+        git add .
+    
+        # Commit only if there are changes
+        git diff --cached --quiet || git commit -m "Auto update movies"
+    
+        # Fetch latest remote changes
+        git fetch origin main
+    
+        # Rebase local commit on top of remote main
+        git pull --rebase origin main
+    
+        # Push updated branch
+        git push origin main
