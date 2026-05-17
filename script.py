@@ -257,91 +257,111 @@ def upload(file_path, chunk_index):
 # ======================
 # UPLOAD ALL CHUNKS (GUARANTEED)
 # ======================
+# ======================
+# UPLOAD ALL CHUNKS (PENDING LIST METHOD)
+# ======================
 def upload_all_chunks(json_files):
     """
-    Upload all chunks in parallel and GUARANTEE that every chunk
-    is uploaded successfully before continuing.
+    Upload all chunks and keep retrying until EVERY chunk is uploaded.
 
-    Features:
-    - Parallel uploads
-    - Automatic retries for failed chunks
-    - Handles Telegram 429 rate limits
-    - Re-uploads any missing chunks
-    - Final verification that all chunks exist
+    Logic:
+    1. Create a list containing all chunk numbers.
+       Example: [0, 1, 2, 3, 4, ...]
+    2. When a chunk uploads successfully, remove its number from the list.
+    3. If a chunk fails, keep its number in the list.
+    4. After one upload round, retry ONLY the remaining chunk numbers.
+    5. Continue until the list becomes empty.
+
+    This guarantees:
+    - No chunk is missed
+    - Failed chunks are retried indefinitely
+    - Process ends only when all chunks are uploaded
     """
+
     total_files = len(json_files)
     total_workers = MAX_WORKERS_PER_BOT * len(UPLOAD_BOTS)
 
     print(f"🚀 Starting parallel uploads with {total_workers} workers...")
     print(f"📦 Total chunks to upload: {total_files}")
 
-    # Successful uploads indexed by chunk number
+    # Dictionary to store successful uploads
     uploaded = {}
 
-    # Initial pending list
-    pending = list(enumerate(json_files))
+    # LIST OF CHUNK NUMBERS STILL TO UPLOAD
+    # Example: [0, 1, 2, 3, 4, ...]
+    pending_chunks = list(range(total_files))
 
     round_number = 1
 
-    # Continue until every chunk is uploaded
-    while pending:
+    # Continue until the list becomes empty
+    while pending_chunks:
         print(f"\n🔄 Upload Round {round_number}")
-        print(f"⏳ Remaining chunks: {len(pending)}")
+        print(f"⏳ Remaining chunks: {len(pending_chunks)}")
+        print(f"📋 Pending list: {pending_chunks[:20]}{' ...' if len(pending_chunks) > 20 else ''}")
 
-        workers = min(total_workers, len(pending))
+        # Use only as many workers as needed
+        workers = min(total_workers, len(pending_chunks))
+
+        # Temporary list for chunks that fail this round
+        failed_chunks = []
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit only pending chunks
             futures = {
-                executor.submit(upload, file_path, index): (index, file_path)
-                for index, file_path in pending
+                executor.submit(upload, json_files[index], index): index
+                for index in pending_chunks
             }
 
-            # Reset pending; failed uploads will be added back
-            pending = []
-
             for future in as_completed(futures):
-                index, file_path = futures[future]
+                index = futures[future]
 
                 try:
                     file_id = future.result()
 
                     if file_id:
+                        # Save successful upload info
                         uploaded[index] = {
                             "order": index,
                             "file_id": file_id,
                             "bot_index": index % len(UPLOAD_BOTS)
                         }
+
+                        # Success -> do NOT add back to pending list
+                        print(f"✅ Removed chunk {index} from pending list")
                     else:
-                        # Upload returned None → retry in next round
-                        pending.append((index, file_path))
+                        # Failed -> keep for next round
+                        failed_chunks.append(index)
 
                 except Exception as e:
                     print(f"❌ Failed chunk {index}: {e}")
-                    pending.append((index, file_path))
+                    failed_chunks.append(index)
+
+        # Replace pending list with only failed chunks
+        pending_chunks = sorted(failed_chunks)
 
         print(
             f"✅ Uploaded: {len(uploaded)}/{total_files} | "
-            f"Remaining: {len(pending)}"
+            f"Remaining in pending list: {len(pending_chunks)}"
         )
 
-        # Wait before retrying failed chunks
-        if pending:
-            print("⏳ Waiting 5 seconds before retrying missing chunks...")
+        # Wait before retrying remaining chunks
+        if pending_chunks:
+            print("⏳ Waiting 5 seconds before retrying remaining chunks...")
             time.sleep(5)
 
         round_number += 1
 
-    # Build ordered list
+    # Build ordered chunk list
     chunks = [uploaded[i] for i in sorted(uploaded.keys())]
 
     # Final verification
     if len(chunks) != total_files:
         raise Exception(
-            f"Upload incomplete! "
-            f"Expected {total_files}, got {len(chunks)}"
+            f"Upload incomplete! Expected {total_files}, got {len(chunks)}"
         )
 
     print(f"\n🎉 All {total_files} chunks uploaded successfully!")
+    print("📋 Pending list is empty.")
     return chunks
 
 
