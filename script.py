@@ -75,7 +75,7 @@ WORKER_URL = "https://frosty-snow-1291.database1806.workers.dev"
 # ======================================================
 
 # 45MB chunks
-CHUNK_SIZE = 10 * 1024 * 1024
+CHUNK_SIZE = 2 * 1024 * 1024
 
 # ======================================================
 # PARALLEL SETTINGS
