@@ -1,6 +1,6 @@
 # ======================================================
 # TELEGRAM DASH STREAMING SYSTEM
-# SEPARATE VIDEO + AUDIO BOT UPLOADS
+# SINGLE BOT POOL
 # MULTI AUDIO SUPPORT
 # SAFE movies.json HANDLING
 # YOUTUBE STYLE .m4s STREAMING
@@ -45,10 +45,10 @@ MOVIES_DIR = os.path.join(
 MOVIES_FILE = "movies.json"
 
 # ======================================================
-# VIDEO BOTS
+# UPLOAD BOTS
 # ======================================================
 
-VIDEO_BOTS = [
+UPLOAD_BOTS = [
 
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
@@ -57,15 +57,6 @@ VIDEO_BOTS = [
     "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
     "8637056729:AAG7X4jOJRuA_t97x39W1bxz8NorIl-Aw-c",
     "8859983169:AAEx_7GkzxwrGlH33-I4Sq5ExzCFNe5lNmE",
-
-]
-
-# ======================================================
-# AUDIO BOTS
-# ======================================================
-
-AUDIO_BOTS = [
-
     "1916501879:AAGSQ9-QYknPHrFLS7IyEN-28_1xdUY8ef0",
     "6480671654:AAEF4dJYRL_NupT3mG42YyVDKtuCjhsZ3kI",
     "7165965867:AAFa42sycAQwUOxx3LLxe9p1HEAAv_ES-5U",
@@ -76,14 +67,7 @@ AUDIO_BOTS = [
     "7737272178:AAGJVAH0mhz-0rdIpNyMms0QRyU5ynsJI3w",
     "7651528639:AAFW4poQ-NNbdqOSskr2mxsjZpkTeGcrRF4",
     "7449236485:AAEOrzgtlIfvZ-WD6B8MQw5f_3kNzthMnX8",
-
-]
-
-# ======================================================
-# BACKUP BOTS
-# ======================================================
-
-BACKUP_BOTS = [
+    
 
 ]
 
@@ -242,7 +226,7 @@ def create_dash(movie_name):
             "-map", "0:a?",
 
             #
-            # NO SUBTITLES
+            # REMOVE SUBTITLES
             #
 
             "-sn",
@@ -254,7 +238,7 @@ def create_dash(movie_name):
             "-c", "copy",
 
             #
-            # DASH
+            # DASH OUTPUT
             #
 
             "-f", "dash",
@@ -313,48 +297,13 @@ def create_dash(movie_name):
 
 
 # ======================================================
-# AUDIO DETECTION
-# ======================================================
-
-def is_audio_file(filename):
-
-    audio_patterns = [
-
-        "chunk-1-",
-        "chunk-2-",
-        "chunk-3-",
-        "chunk-4-",
-        "chunk-5-",
-
-        "init-1",
-        "init-2",
-        "init-3",
-        "init-4",
-        "init-5",
-    ]
-
-    for pattern in audio_patterns:
-
-        if pattern in filename:
-            return True
-
-    return False
-
-
-# ======================================================
 # SELECT BOT
 # ======================================================
 
-def get_upload_bot(index, filename):
+def get_upload_bot(index):
 
-    if is_audio_file(filename):
-
-        return AUDIO_BOTS[
-            index % len(AUDIO_BOTS)
-        ]
-
-    return VIDEO_BOTS[
-        index % len(VIDEO_BOTS)
+    return UPLOAD_BOTS[
+        index % len(UPLOAD_BOTS)
     ]
 
 
@@ -366,10 +315,7 @@ def upload_file(file_path, index):
 
     filename = os.path.basename(file_path)
 
-    bot_token = get_upload_bot(
-        index,
-        filename
-    )
+    bot_token = get_upload_bot(index)
 
     api_url = (
         f"https://api.telegram.org/"
@@ -407,14 +353,8 @@ def upload_file(file_path, index):
                     ["file_id"]
                 )
 
-                upload_type = (
-                    "🎵 AUDIO"
-                    if is_audio_file(filename)
-                    else "🎥 VIDEO"
-                )
-
                 print(
-                    f"{upload_type} Uploaded: "
+                    f"🚀 Uploaded: "
                     f"{filename}"
                 )
 
@@ -472,14 +412,8 @@ def upload_file(file_path, index):
 def upload_all_files(files):
 
     total_workers = (
-
-        MAX_WORKERS_PER_BOT *
-
-        (
-            len(VIDEO_BOTS)
-            +
-            len(AUDIO_BOTS)
-        )
+        len(UPLOAD_BOTS)
+        * MAX_WORKERS_PER_BOT
     )
 
     uploaded = {}
@@ -601,7 +535,7 @@ def process_movie(movie):
         os.remove(TEMP_VIDEO)
 
     #
-    # Download
+    # Download source
     #
 
     if not download_video(movie["url"]):
@@ -638,10 +572,6 @@ def process_movie(movie):
 # ======================================================
 
 def update_catalog(entries):
-
-    #
-    # Default structure
-    #
 
     data = {
         "movies": []
@@ -710,7 +640,7 @@ def update_catalog(entries):
     )
 
     #
-    # Sort
+    # Sort movies
     #
 
     data["movies"].sort(
