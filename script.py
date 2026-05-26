@@ -1,9 +1,9 @@
 # ======================================================
-# TELEGRAM DASH (.m4s) STREAMING SYSTEM
-# YOUTUBE STYLE STREAMING
+# TELEGRAM DASH STREAMING SYSTEM
+# SEPARATE VIDEO + AUDIO BOT UPLOADS
 # MULTI AUDIO SUPPORT
-# NO RE-ENCODING
-# ORIGINAL QUALITY
+# SAFE movies.json HANDLING
+# YOUTUBE STYLE .m4s STREAMING
 # ======================================================
 
 import os
@@ -45,10 +45,11 @@ MOVIES_DIR = os.path.join(
 MOVIES_FILE = "movies.json"
 
 # ======================================================
-# TELEGRAM CONFIG
+# VIDEO BOTS
 # ======================================================
 
-UPLOAD_BOTS = [
+VIDEO_BOTS = [
+
     "8522819598:AAFd20SQZ5G2CgadEtfATTGi191eacbMeUg",
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
@@ -56,10 +57,39 @@ UPLOAD_BOTS = [
     "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
     "8637056729:AAG7X4jOJRuA_t97x39W1bxz8NorIl-Aw-c",
     "8859983169:AAEx_7GkzxwrGlH33-I4Sq5ExzCFNe5lNmE",
+
+]
+
+# ======================================================
+# AUDIO BOTS
+# ======================================================
+
+AUDIO_BOTS = [
+
+    "1916501879:AAGSQ9-QYknPHrFLS7IyEN-28_1xdUY8ef0",
+    "6480671654:AAEF4dJYRL_NupT3mG42YyVDKtuCjhsZ3kI",
+    "7165965867:AAFa42sycAQwUOxx3LLxe9p1HEAAv_ES-5U",
+    "6904798040:AAFLbP_cnGHRJi1CP8IuWP4IxQIVRAbJJdY",
+    "6301732534:AAGv15CymWMtPEKjQ-k6_ZZX-QGMY0S1M9c",
+    "6755092505:AAHqzYXwHrVGR0i4_ltlVoPi2JrVtxNaQ6s",
     "6824663359:AAFJeyqimtZGUl5KifGnXnwbtJ6r2HO_1d0",
     "7737272178:AAGJVAH0mhz-0rdIpNyMms0QRyU5ynsJI3w",
     "7651528639:AAFW4poQ-NNbdqOSskr2mxsjZpkTeGcrRF4",
+    "7449236485:AAEOrzgtlIfvZ-WD6B8MQw5f_3kNzthMnX8",
+
 ]
+
+# ======================================================
+# BACKUP BOTS
+# ======================================================
+
+BACKUP_BOTS = [
+
+]
+
+# ======================================================
+# TELEGRAM CHANNEL
+# ======================================================
 
 CHAT_ID = "@stream1806"
 
@@ -81,7 +111,7 @@ SEGMENT_DURATION = 4
 # PARALLEL SETTINGS
 # ======================================================
 
-MAX_WORKERS_PER_BOT = 4
+MAX_WORKERS_PER_BOT = 2
 
 # ======================================================
 # CREATE FOLDERS
@@ -133,6 +163,7 @@ def download_video(url):
             ) as r:
 
                 if r.status_code != 200:
+
                     raise Exception(
                         f"Status {r.status_code}"
                     )
@@ -153,7 +184,7 @@ def download_video(url):
 
                             print(
                                 f"\r📥 "
-                                f"{total / (1024*1024):.2f} MB",
+                                f"{total/(1024*1024):.2f} MB",
                                 end=""
                             )
 
@@ -176,14 +207,13 @@ def download_video(url):
 
 
 # ======================================================
-# CREATE DASH SEGMENTS
+# CREATE DASH
 # ======================================================
 
 def create_dash(movie_name):
 
     print("\n🎬 Creating DASH stream...")
 
-    # Remove old DASH files
     if os.path.exists(DASH_DIR):
         shutil.rmtree(DASH_DIR)
 
@@ -193,13 +223,6 @@ def create_dash(movie_name):
         DASH_DIR,
         "stream.mpd"
     )
-
-    #
-    # IMPORTANT:
-    # -map 0:v = include video
-    # -map 0:a? = include audio
-    # subtitles ignored
-    #
 
     result = subprocess.run(
 
@@ -219,36 +242,32 @@ def create_dash(movie_name):
             "-map", "0:a?",
 
             #
+            # NO SUBTITLES
+            #
+
+            "-sn",
+
+            #
             # NO RE-ENCODING
             #
 
             "-c", "copy",
 
             #
-            # Bitrate metadata
-            #
-
-            "-b:v", "3000k",
-            "-b:a", "128k",
-
-            #
             # DASH
             #
 
-            "-f",
-            "dash",
+            "-f", "dash",
 
             "-seg_duration",
             str(SEGMENT_DURATION),
 
-            "-use_template",
-            "1",
+            "-use_template", "1",
 
-            "-use_timeline",
-            "1",
+            "-use_timeline", "1",
 
             #
-            # Fragment names
+            # Segment names
             #
 
             "-init_seg_name",
@@ -262,7 +281,6 @@ def create_dash(movie_name):
 
         capture_output=True,
         text=True
-
     )
 
     if result.returncode != 0:
@@ -288,20 +306,55 @@ def create_dash(movie_name):
 
     print(
         f"📦 Created "
-        f"{len(files)} DASH files"
+        f"{len(files)} files"
     )
 
     return files
 
 
 # ======================================================
+# AUDIO DETECTION
+# ======================================================
+
+def is_audio_file(filename):
+
+    audio_patterns = [
+
+        "chunk-1-",
+        "chunk-2-",
+        "chunk-3-",
+        "chunk-4-",
+        "chunk-5-",
+
+        "init-1",
+        "init-2",
+        "init-3",
+        "init-4",
+        "init-5",
+    ]
+
+    for pattern in audio_patterns:
+
+        if pattern in filename:
+            return True
+
+    return False
+
+
+# ======================================================
 # SELECT BOT
 # ======================================================
 
-def get_upload_bot(index):
+def get_upload_bot(index, filename):
 
-    return UPLOAD_BOTS[
-        index % len(UPLOAD_BOTS)
+    if is_audio_file(filename):
+
+        return AUDIO_BOTS[
+            index % len(AUDIO_BOTS)
+        ]
+
+    return VIDEO_BOTS[
+        index % len(VIDEO_BOTS)
     ]
 
 
@@ -311,7 +364,12 @@ def get_upload_bot(index):
 
 def upload_file(file_path, index):
 
-    bot_token = get_upload_bot(index)
+    filename = os.path.basename(file_path)
+
+    bot_token = get_upload_bot(
+        index,
+        filename
+    )
 
     api_url = (
         f"https://api.telegram.org/"
@@ -349,23 +407,31 @@ def upload_file(file_path, index):
                     ["file_id"]
                 )
 
+                upload_type = (
+                    "🎵 AUDIO"
+                    if is_audio_file(filename)
+                    else "🎥 VIDEO"
+                )
+
                 print(
-                    f"🚀 Uploaded "
-                    f"{os.path.basename(file_path)}"
+                    f"{upload_type} Uploaded: "
+                    f"{filename}"
                 )
 
                 return {
 
-                    "name":
-                    os.path.basename(file_path),
+                    "name": filename,
 
-                    "file_id":
-                    file_id
+                    "file_id": file_id
                 }
 
             print(
                 f"❌ Upload error:\n{data}"
             )
+
+            #
+            # Telegram rate limit
+            #
 
             if data.get("error_code") == 429:
 
@@ -400,17 +466,28 @@ def upload_file(file_path, index):
 
 
 # ======================================================
-# UPLOAD ALL DASH FILES
+# UPLOAD ALL FILES
 # ======================================================
 
 def upload_all_files(files):
 
     total_workers = (
+
         MAX_WORKERS_PER_BOT *
-        len(UPLOAD_BOTS)
+
+        (
+            len(VIDEO_BOTS)
+            +
+            len(AUDIO_BOTS)
+        )
     )
 
     uploaded = {}
+
+    print(
+        f"\n🚀 Parallel uploads: "
+        f"{total_workers}"
+    )
 
     with ThreadPoolExecutor(
         max_workers=total_workers
@@ -432,13 +509,16 @@ def upload_all_files(files):
             result = future.result()
 
             if result:
-                uploaded[result["name"]] = result
+
+                uploaded[
+                    result["name"]
+                ] = result
 
     return uploaded
 
 
 # ======================================================
-# CREATE FINAL MPD
+# BUILD FINAL MPD
 # ======================================================
 
 def build_final_mpd(
@@ -467,7 +547,7 @@ def build_final_mpd(
         mpd = f.read()
 
     #
-    # Replace DASH filenames
+    # Replace filenames
     # with Worker URLs
     #
 
@@ -480,6 +560,7 @@ def build_final_mpd(
             continue
 
         worker_url = (
+
             f"{WORKER_URL}/file_by_id/"
             f"{requests.utils.quote(data['file_id'], safe='')}"
         )
@@ -520,7 +601,7 @@ def process_movie(movie):
         os.remove(TEMP_VIDEO)
 
     #
-    # Download source
+    # Download
     #
 
     if not download_video(movie["url"]):
@@ -541,7 +622,7 @@ def process_movie(movie):
     uploaded = upload_all_files(files)
 
     #
-    # Create final MPD
+    # Create MPD
     #
 
     safe_name = build_final_mpd(
@@ -558,23 +639,91 @@ def process_movie(movie):
 
 def update_catalog(entries):
 
+    #
+    # Default structure
+    #
+
+    data = {
+        "movies": []
+    }
+
+    #
+    # Load existing safely
+    #
+
     if os.path.exists(MOVIES_FILE):
 
-        with open(
-            MOVIES_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        try:
 
-            data = json.load(f)
+            with open(
+                MOVIES_FILE,
+                "r",
+                encoding="utf-8"
+            ) as f:
 
-    else:
+                existing = json.load(f)
 
-        data = {
-            "movies": []
-        }
+                if (
+                    isinstance(existing, dict)
+                    and "movies" in existing
+                ):
 
-    data["movies"] = entries
+                    data = existing
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Invalid movies.json "
+                f"detected. Rebuilding... "
+                f"{e}"
+            )
+
+    #
+    # Merge movies
+    #
+
+    existing_map = {
+
+        (
+            item.get("name"),
+            item.get("year")
+        ): item
+
+        for item in data["movies"]
+    }
+
+    for entry in entries:
+
+        existing_map[
+            (
+                entry["name"],
+                entry["year"]
+            )
+        ] = entry
+
+    #
+    # Convert back to list
+    #
+
+    data["movies"] = list(
+        existing_map.values()
+    )
+
+    #
+    # Sort
+    #
+
+    data["movies"].sort(
+
+        key=lambda x: (
+            x["name"].lower(),
+            x["year"]
+        )
+    )
+
+    #
+    # Save safely
+    #
 
     with open(
         MOVIES_FILE,
