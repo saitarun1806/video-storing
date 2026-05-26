@@ -1,57 +1,129 @@
 name: Video Pipeline
 
 on:
+
   workflow_dispatch:
+
   push:
     paths:
       - input_movies.json
+      - script.py
 
 jobs:
+
   run-script:
+
     runs-on: ubuntu-latest
 
+    #
+    # Large uploads need time
+    #
+
+    timeout-minutes: 360
+
     steps:
+
+    # ==================================================
+    # CHECKOUT
+    # ==================================================
+
     - name: Checkout repo
       uses: actions/checkout@v4
+
+    # ==================================================
+    # PYTHON
+    # ==================================================
 
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
-        python-version: 3.11
+        python-version: "3.11"
+
+    # ==================================================
+    # PYTHON DEPENDENCIES
+    # ==================================================
 
     - name: Install dependencies
       run: |
         pip install requests
+
+    # ==================================================
+    # FFMPEG
+    # ==================================================
 
     - name: Install FFmpeg
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
 
-    - name: Install curl
-      run: sudo apt-get install -y curl
+    # ==================================================
+    # VERIFY FFMPEG
+    # ==================================================
+
+    - name: Verify FFmpeg
+      run: |
+        ffmpeg -version
+
+    # ==================================================
+    # OPTIONAL CLEANUP
+    # ==================================================
+
+    - name: Cleanup broken files
+      run: |
+        rm -rf dash_output || true
+
+    # ==================================================
+    # RUN SCRIPT
+    # ==================================================
 
     - name: Run Python script
       run: |
         python script.py
 
-    # 🔍 Debug (see what files are created)
-    - name: Debug files
-      run: |
-        echo "==== FILE STRUCTURE ===="
-        ls -R
+    # ==================================================
+    # DEBUG OUTPUT
+    # ==================================================
 
-    # 🔥 Safe commit (no error if files missing)
-    - name: Commit and push results
+    - name: Debug generated files
+      run: |
+        echo "==== MOVIES ===="
+        ls -R movies || true
+
+        echo "==== DASH OUTPUT ===="
+        ls -R dash_output || true
+
+    # ==================================================
+    # GIT CONFIG
+    # ==================================================
+
+    - name: Setup Git
       run: |
         git config user.name "github-actions"
         git config user.email "actions@github.com"
 
-        # add only if exists
+    # ==================================================
+    # COMMIT RESULTS
+    # ==================================================
+
+    - name: Commit and push results
+      run: |
+
+        #
+        # Add files safely
+        #
+
         [ -f movies.json ] && git add movies.json
+
         [ -d movies ] && git add movies/
 
-        # commit safely
-        git commit -m "Auto update movies" || echo "No changes"
+        #
+        # Commit safely
+        #
+
+        git commit -m "Auto update DASH streams" || echo "No changes"
+
+        #
+        # Push
+        #
 
         git push
