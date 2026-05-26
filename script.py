@@ -1,9 +1,8 @@
 # ======================================================
-# TELEGRAM DIRECT CHUNK MOVIE STORAGE SYSTEM
-# NO FFMPEG
-# NO HLS
+# TELEGRAM DASH (.m4s) STREAMING SYSTEM
+# YOUTUBE STYLE STREAMING
 # NO RE-ENCODING
-# ORIGINAL QUALITY PRESERVED
+# ORIGINAL QUALITY
 # ======================================================
 
 import os
@@ -12,6 +11,7 @@ import requests
 import time
 import re
 import shutil
+import subprocess
 
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -31,9 +31,9 @@ TEMP_VIDEO = os.path.join(
     "temp.mp4"
 )
 
-CHUNKS_DIR = os.path.join(
+DASH_DIR = os.path.join(
     PROJECT_DIR,
-    "chunks"
+    "dash_output"
 )
 
 MOVIES_DIR = os.path.join(
@@ -52,14 +52,6 @@ UPLOAD_BOTS = [
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
     "8809309930:AAGq_qEv3e3TjKwU2lQf9pINVFxIV5KLYok",
-    "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
-    "8637056729:AAG7X4jOJRuA_t97x39W1bxz8NorIl-Aw-c",
-    "8859983169:AAEx_7GkzxwrGlH33-I4Sq5ExzCFNe5lNmE",
-    "6824663359:AAFJeyqimtZGUl5KifGnXnwbtJ6r2HO_1d0",
-    "7737272178:AAGJVAH0mhz-0rdIpNyMms0QRyU5ynsJI3w",
-    "7651528639:AAFW4poQ-NNbdqOSskr2mxsjZpkTeGcrRF4",
-    "8651470873:AAEMq3GGKk9FBG60O6Vd_eH5V-1x0S6Pqc4",
-    "7557078677:AAGQjGgkl7DzFGGKCguVm1mqu48X3oOpmjs",
 ]
 
 CHAT_ID = "@stream1806"
@@ -68,14 +60,15 @@ CHAT_ID = "@stream1806"
 # WORKER URL
 # ======================================================
 
-WORKER_URL = "https://frosty-snow-1291.database1806.workers.dev"
+WORKER_URL = (
+    "https://frosty-snow-1291.database1806.workers.dev"
+)
 
 # ======================================================
-# CHUNK SETTINGS
+# DASH SETTINGS
 # ======================================================
 
-# 45MB chunks
-CHUNK_SIZE = 2 * 1024 * 1024
+SEGMENT_DURATION = 4
 
 # ======================================================
 # PARALLEL SETTINGS
@@ -88,7 +81,7 @@ MAX_WORKERS_PER_BOT = 4
 # ======================================================
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
-os.makedirs(CHUNKS_DIR, exist_ok=True)
+os.makedirs(DASH_DIR, exist_ok=True)
 os.makedirs(MOVIES_DIR, exist_ok=True)
 
 # ======================================================
@@ -137,8 +130,6 @@ def download_video(url):
                         f"Status {r.status_code}"
                     )
 
-                total = 0
-
                 with open(TEMP_VIDEO, "wb") as f:
 
                     for chunk in r.iter_content(
@@ -146,25 +137,16 @@ def download_video(url):
                     ):
 
                         if chunk:
-
                             f.write(chunk)
 
-                            total += len(chunk)
-
-                            print(
-                                f"\r📥 "
-                                f"{total / (1024*1024):.2f} MB",
-                                end=""
-                            )
-
-            print("\n✅ Download complete")
+            print("✅ Download complete")
 
             return True
 
         except Exception as e:
 
             print(
-                f"\n⚠️ Retry "
+                f"⚠️ Retry "
                 f"{attempt+1}: {e}"
             )
 
@@ -176,66 +158,98 @@ def download_video(url):
 
 
 # ======================================================
-# CREATE DIRECT CHUNKS
+# CREATE DASH SEGMENTS
 # ======================================================
 
-def create_chunks(movie_name):
+def create_dash(movie_name):
 
-    print("\n📦 Creating chunks...")
+    print("\n🎬 Creating DASH stream...")
 
-    # Remove old chunks
-    if os.path.exists(CHUNKS_DIR):
-        shutil.rmtree(CHUNKS_DIR)
+    # Remove old DASH files
+    if os.path.exists(DASH_DIR):
+        shutil.rmtree(DASH_DIR)
 
-    os.makedirs(CHUNKS_DIR, exist_ok=True)
+    os.makedirs(DASH_DIR, exist_ok=True)
 
-    chunk_files = []
-
-    total_size = os.path.getsize(TEMP_VIDEO)
-
-    print(
-        f"🎞 Video Size: "
-        f"{total_size / (1024*1024):.2f} MB"
+    mpd_path = os.path.join(
+        DASH_DIR,
+        "stream.mpd"
     )
 
-    with open(TEMP_VIDEO, "rb") as f:
+    #
+    # IMPORTANT:
+    # -c copy = NO re-encoding
+    #
 
-        index = 0
+    result = subprocess.run(
 
-        while True:
+        [
+            "ffmpeg",
 
-            data = f.read(CHUNK_SIZE)
+            "-y",
 
-            if not data:
-                break
+            "-i",
+            TEMP_VIDEO,
 
-            chunk_path = os.path.join(
-                CHUNKS_DIR,
-                f"chunk_{index:05d}.bin"
-            )
+            "-map",
+            "0",
 
-            with open(chunk_path, "wb") as out:
-                out.write(data)
+            "-c",
+            "copy",
 
-            chunk_size_mb = (
-                len(data) / (1024*1024)
-            )
+            "-f",
+            "dash",
 
-            print(
-                f"📦 Chunk {index} | "
-                f"{chunk_size_mb:.2f} MB"
-            )
+            "-seg_duration",
+            str(SEGMENT_DURATION),
 
-            chunk_files.append(chunk_path)
+            "-use_template",
+            "1",
 
-            index += 1
+            "-use_timeline",
+            "1",
 
-    print(
-        f"\n✅ Created "
-        f"{len(chunk_files)} chunks"
+            "-init_seg_name",
+            "init-$RepresentationID$.m4s",
+
+            "-media_seg_name",
+            "chunk-$RepresentationID$-$Number%05d$.m4s",
+
+            mpd_path
+        ],
+
+        capture_output=True,
+        text=True
+
     )
 
-    return chunk_files
+    if result.returncode != 0:
+
+        print(result.stderr)
+
+        raise RuntimeError(
+            "FFmpeg DASH creation failed"
+        )
+
+    print("✅ DASH stream created")
+
+    files = sorted(
+
+        os.path.join(DASH_DIR, f)
+
+        for f in os.listdir(DASH_DIR)
+
+        if f.endswith(".m4s")
+        or f.endswith(".mpd")
+
+    )
+
+    print(
+        f"📦 Created "
+        f"{len(files)} DASH files"
+    )
+
+    return files
 
 
 # ======================================================
@@ -250,10 +264,10 @@ def get_upload_bot(index):
 
 
 # ======================================================
-# UPLOAD SINGLE CHUNK
+# UPLOAD SINGLE FILE
 # ======================================================
 
-def upload_chunk(file_path, index):
+def upload_file(file_path, index):
 
     bot_token = get_upload_bot(index)
 
@@ -269,13 +283,17 @@ def upload_chunk(file_path, index):
             with open(file_path, "rb") as f:
 
                 response = requests.post(
+
                     api_url,
+
                     data={
                         "chat_id": CHAT_ID
                     },
+
                     files={
                         "document": f
                     },
+
                     timeout=300
                 )
 
@@ -291,22 +309,26 @@ def upload_chunk(file_path, index):
 
                 print(
                     f"🚀 Uploaded "
-                    f"chunk {index}"
+                    f"{os.path.basename(file_path)}"
                 )
 
                 return {
-                    "index": index,
-                    "file_id": file_id
+
+                    "name":
+                    os.path.basename(file_path),
+
+                    "file_id":
+                    file_id
                 }
 
             print(
                 f"❌ Upload error:\n{data}"
             )
 
-            # Telegram rate limit
             if data.get("error_code") == 429:
 
                 retry_after = (
+
                     data.get(
                         "parameters",
                         {}
@@ -336,170 +358,122 @@ def upload_chunk(file_path, index):
 
 
 # ======================================================
-# UPLOAD ALL CHUNKS
+# UPLOAD ALL DASH FILES
 # ======================================================
 
-def upload_all_chunks(chunk_files):
-
-    total_files = len(chunk_files)
+def upload_all_files(files):
 
     total_workers = (
         MAX_WORKERS_PER_BOT *
         len(UPLOAD_BOTS)
     )
 
-    print(
-        f"\n🚀 Uploading "
-        f"{total_files} chunks"
-    )
-
     uploaded = {}
 
-    pending = list(range(total_files))
+    with ThreadPoolExecutor(
+        max_workers=total_workers
+    ) as executor:
 
-    round_number = 1
+        futures = {
 
-    while pending:
+            executor.submit(
+                upload_file,
+                files[i],
+                i
+            ): i
 
-        print(
-            f"\n🔄 Upload Round "
-            f"{round_number}"
-        )
+            for i in range(len(files))
+        }
 
-        failed = []
+        for future in as_completed(futures):
 
-        workers = min(
-            total_workers,
-            len(pending)
-        )
+            result = future.result()
 
-        with ThreadPoolExecutor(
-            max_workers=workers
-        ) as executor:
+            if result:
+                uploaded[result["name"]] = result
 
-            futures = {
-
-                executor.submit(
-                    upload_chunk,
-                    chunk_files[index],
-                    index
-                ): index
-
-                for index in pending
-            }
-
-            for future in as_completed(futures):
-
-                index = futures[future]
-
-                try:
-
-                    result = future.result()
-
-                    if result:
-                        uploaded[index] = result
-                    else:
-                        failed.append(index)
-
-                except Exception as e:
-
-                    print(
-                        f"❌ Failed "
-                        f"chunk {index}: {e}"
-                    )
-
-                    failed.append(index)
-
-        pending = failed
-
-        print(
-            f"✅ Uploaded: "
-            f"{len(uploaded)}/"
-            f"{total_files}"
-        )
-
-        if pending:
-
-            print(
-                "⏳ Waiting "
-                "5 seconds..."
-            )
-
-            time.sleep(5)
-
-        round_number += 1
-
-    print("\n🎉 All chunks uploaded!")
-
-    return [
-        uploaded[i]
-        for i in sorted(uploaded.keys())
-    ]
+    return uploaded
 
 
 # ======================================================
-# CREATE MOVIE METADATA
+# CREATE FINAL MPD
 # ======================================================
 
-def create_movie_metadata(
-    movie,
-    uploaded_chunks
+def build_final_mpd(
+    movie_name,
+    uploaded_files
 ):
 
-    safe_name = clean_name(
-        movie["name"]
+    safe_name = clean_name(movie_name)
+
+    original_mpd_path = os.path.join(
+        DASH_DIR,
+        "stream.mpd"
     )
 
-    metadata_path = os.path.join(
+    final_mpd_path = os.path.join(
         MOVIES_DIR,
-        f"{safe_name}.json"
+        f"{safe_name}.mpd"
     )
-
-    metadata = {
-
-        "name": movie["name"],
-
-        "year": movie["year"],
-
-        "original_url": movie["url"],
-
-        "chunk_size": CHUNK_SIZE,
-
-        "total_chunks": len(uploaded_chunks),
-
-        "chunks": []
-    }
-
-    for chunk in uploaded_chunks:
-
-        metadata["chunks"].append({
-
-            "index": chunk["index"],
-
-            "file_id": chunk["file_id"],
-
-            "url":
-            f"{WORKER_URL}/file_by_id/"
-            f"{requests.utils.quote(chunk['file_id'], safe='')}"
-
-        })
 
     with open(
-        metadata_path,
+        original_mpd_path,
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        mpd = f.read()
+
+    #
+    # Replace segment names
+    # with Worker URLs
+    #
+
+    for filename, data in uploaded_files.items():
+
+        if not filename.endswith(".m4s"):
+            continue
+
+        worker_url = (
+            f"{WORKER_URL}/file_by_id/"
+            f"{requests.utils.quote(data['file_id'], safe='')}"
+        )
+
+        mpd = mpd.replace(
+            filename,
+            worker_url
+        )
+
+    #
+    # Replace init files
+    #
+
+    for filename, data in uploaded_files.items():
+
+        if not filename.startswith("init-"):
+            continue
+
+        worker_url = (
+            f"{WORKER_URL}/file_by_id/"
+            f"{requests.utils.quote(data['file_id'], safe='')}"
+        )
+
+        mpd = mpd.replace(
+            filename,
+            worker_url
+        )
+
+    with open(
+        final_mpd_path,
         "w",
         encoding="utf-8"
     ) as f:
 
-        json.dump(
-            metadata,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
+        f.write(mpd)
 
     print(
-        f"📝 Saved metadata:\n"
-        f"{metadata_path}"
+        f"📝 Saved MPD:\n"
+        f"{final_mpd_path}"
     )
 
     return safe_name
@@ -513,42 +487,47 @@ def process_movie(movie):
 
     print(
         f"\n🎬 PROCESSING:\n"
-        f"{movie['name']} "
-        f"({movie['year']})"
+        f"{movie['name']}"
     )
 
-    # Remove previous temp video
     if os.path.exists(TEMP_VIDEO):
         os.remove(TEMP_VIDEO)
 
-    # Download movie
+    #
+    # Download source
+    #
+
     if not download_video(movie["url"]):
-
-        print("⛔ Download failed")
-
         return None
 
-    # Create chunks
-    chunk_files = create_chunks(
+    #
+    # Create DASH
+    #
+
+    files = create_dash(
         movie["name"]
     )
 
-    # Upload chunks
-    uploaded_chunks = upload_all_chunks(
-        chunk_files
-    )
+    #
+    # Upload DASH files
+    #
 
-    # Create metadata
-    safe_name = create_movie_metadata(
-        movie,
-        uploaded_chunks
+    uploaded = upload_all_files(files)
+
+    #
+    # Create final MPD
+    #
+
+    safe_name = build_final_mpd(
+        movie["name"],
+        uploaded
     )
 
     return safe_name
 
 
 # ======================================================
-# UPDATE movies.json
+# UPDATE CATALOG
 # ======================================================
 
 def update_catalog(entries):
@@ -569,38 +548,7 @@ def update_catalog(entries):
             "movies": []
         }
 
-    existing = {
-
-        (
-            item.get("name"),
-            item.get("year")
-        ): item
-
-        for item in data["movies"]
-    }
-
-    for entry in entries:
-
-        if entry:
-
-            existing[
-                (
-                    entry["name"],
-                    entry["year"]
-                )
-            ] = entry
-
-    data["movies"] = list(
-        existing.values()
-    )
-
-    data["movies"].sort(
-
-        key=lambda x: (
-            x["name"].lower(),
-            x["year"]
-        )
-    )
+    data["movies"] = entries
 
     with open(
         MOVIES_FILE,
@@ -625,8 +573,8 @@ def update_catalog(entries):
 if __name__ == "__main__":
 
     print(
-        "\n🚀 DIRECT CHUNK "
-        "MOVIE STORAGE SYSTEM\n"
+        "\n🚀 TELEGRAM DASH "
+        "STREAMING SYSTEM\n"
     )
 
     with open(
@@ -647,10 +595,11 @@ if __name__ == "__main__":
             continue
 
         playlist_url = (
+
             "https://raw.githubusercontent.com/"
             "saitarun1806/"
-            "video-storing/main/"
-            f"movies/{safe_name}.json"
+            "video-storing/main/movies/"
+            f"{safe_name}.mpd"
         )
 
         catalog_entries.append({
