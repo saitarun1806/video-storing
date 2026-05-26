@@ -1,6 +1,7 @@
 # ======================================================
 # TELEGRAM DASH (.m4s) STREAMING SYSTEM
 # YOUTUBE STYLE STREAMING
+# MULTI AUDIO SUPPORT
 # NO RE-ENCODING
 # ORIGINAL QUALITY
 # ======================================================
@@ -28,7 +29,7 @@ PROJECT_DIR = "."
 
 TEMP_VIDEO = os.path.join(
     PROJECT_DIR,
-    "temp.mp4"
+    "temp.mkv"
 )
 
 DASH_DIR = os.path.join(
@@ -52,6 +53,12 @@ UPLOAD_BOTS = [
     "8756092341:AAF84Kg1K3Ji7X16dQy5DETtoo-7BktbFyc",
     "8020744167:AAFw0RbWz_NGGfJNLvlO_O-gAU5xl9VLkgs",
     "8809309930:AAGq_qEv3e3TjKwU2lQf9pINVFxIV5KLYok",
+    "8934970747:AAGNtsVG5MvtK5TxL5fFzyrLBIWjIG6CwwU",
+    "8637056729:AAG7X4jOJRuA_t97x39W1bxz8NorIl-Aw-c",
+    "8859983169:AAEx_7GkzxwrGlH33-I4Sq5ExzCFNe5lNmE",
+    "6824663359:AAFJeyqimtZGUl5KifGnXnwbtJ6r2HO_1d0",
+    "7737272178:AAGJVAH0mhz-0rdIpNyMms0QRyU5ynsJI3w",
+    "7651528639:AAFW4poQ-NNbdqOSskr2mxsjZpkTeGcrRF4",
 ]
 
 CHAT_ID = "@stream1806"
@@ -130,6 +137,8 @@ def download_video(url):
                         f"Status {r.status_code}"
                     )
 
+                total = 0
+
                 with open(TEMP_VIDEO, "wb") as f:
 
                     for chunk in r.iter_content(
@@ -137,16 +146,25 @@ def download_video(url):
                     ):
 
                         if chunk:
+
                             f.write(chunk)
 
-            print("✅ Download complete")
+                            total += len(chunk)
+
+                            print(
+                                f"\r📥 "
+                                f"{total / (1024*1024):.2f} MB",
+                                end=""
+                            )
+
+            print("\n✅ Download complete")
 
             return True
 
         except Exception as e:
 
             print(
-                f"⚠️ Retry "
+                f"\n⚠️ Retry "
                 f"{attempt+1}: {e}"
             )
 
@@ -178,7 +196,9 @@ def create_dash(movie_name):
 
     #
     # IMPORTANT:
-    # -c copy = NO re-encoding
+    # -map 0:v = include video
+    # -map 0:a? = include audio
+    # subtitles ignored
     #
 
     result = subprocess.run(
@@ -191,11 +211,29 @@ def create_dash(movie_name):
             "-i",
             TEMP_VIDEO,
 
-            "-map",
-            "0",
+            #
+            # VIDEO + AUDIO ONLY
+            #
 
-            "-c",
-            "copy",
+            "-map", "0:v",
+            "-map", "0:a?",
+
+            #
+            # NO RE-ENCODING
+            #
+
+            "-c", "copy",
+
+            #
+            # Bitrate metadata
+            #
+
+            "-b:v", "3000k",
+            "-b:a", "128k",
+
+            #
+            # DASH
+            #
 
             "-f",
             "dash",
@@ -208,6 +246,10 @@ def create_dash(movie_name):
 
             "-use_timeline",
             "1",
+
+            #
+            # Fragment names
+            #
 
             "-init_seg_name",
             "init-$RepresentationID$.m4s",
@@ -425,32 +467,16 @@ def build_final_mpd(
         mpd = f.read()
 
     #
-    # Replace segment names
+    # Replace DASH filenames
     # with Worker URLs
     #
 
     for filename, data in uploaded_files.items():
 
-        if not filename.endswith(".m4s"):
-            continue
-
-        worker_url = (
-            f"{WORKER_URL}/file_by_id/"
-            f"{requests.utils.quote(data['file_id'], safe='')}"
-        )
-
-        mpd = mpd.replace(
-            filename,
-            worker_url
-        )
-
-    #
-    # Replace init files
-    #
-
-    for filename, data in uploaded_files.items():
-
-        if not filename.startswith("init-"):
+        if not (
+            filename.endswith(".m4s")
+            or filename.endswith(".mpd")
+        ):
             continue
 
         worker_url = (
