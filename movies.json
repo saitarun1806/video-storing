@@ -19,6 +19,11 @@
       "name": "Sample Movie",
       "year": 2026,
       "manifest": "https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/sample_movie_2026.json"
+    },
+    {
+      "name": "The Super Mario Galaxy",
+      "year": 2026,
+      "playlist": "https://raw.githubusercontent.com/saitarun1806/video-storing/main/movies/the_super_mario_galaxy.json"
     }
   ]
 }
