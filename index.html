@@ -164,9 +164,72 @@ async function initPlayer(){
   if(!MPD) return;
   await player.attach(v);
   player.configure({
-    streaming:{bufferingGoal:20,rebufferingGoal:2,bufferBehind:30,retryParameters:{maxAttempts:4,baseDelay:1000,backoffFactor:2}},
+    streaming:{
+      bufferingGoal:20,
+      rebufferingGoal:2,
+      bufferBehind:30,
+      // ── 5 PARALLEL CHUNK DOWNLOADS ──
+      segmentPrefetchLimit: 5,
+      // Parallel fetch for both video and audio segments
+      maxDisabledTime: 30,
+      retryParameters:{
+        maxAttempts:4,
+        baseDelay:1000,
+        backoffFactor:2,
+        // Allow up to 5 concurrent fetch attempts
+        timeout: 0,
+        stallTimeout: 5000,
+        connectionTimeout: 10000,
+      },
+    },
+    // Parallel manifest and segment fetching
+    manifest:{
+      retryParameters:{
+        maxAttempts:4,
+        baseDelay:1000,
+        backoffFactor:2,
+        timeout: 0,
+        stallTimeout: 5000,
+        connectionTimeout: 10000,
+      },
+    },
     abr:{enabled:true,defaultBandwidthEstimate:1000000},
   });
+
+  // ── PARALLEL FETCH NETWORKINGENGINE PLUGIN ──
+  // Override segment requests to dispatch up to 5 in parallel via a queue
+  const ne = player.getNetworkingEngine();
+  const PARALLEL = 5;
+  let activeRequests = 0;
+  const queue = [];
+
+  function drainQueue() {
+    while (queue.length > 0 && activeRequests < PARALLEL) {
+      const { resolve } = queue.shift();
+      activeRequests++;
+      resolve();
+    }
+  }
+
+  ne.registerRequestFilter((type, request) => {
+    // Apply parallel limiting to segment requests (type 1 = SEGMENT)
+    if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
+    if (activeRequests < PARALLEL) {
+      activeRequests++;
+      return; // proceed immediately
+    }
+    // Queue the request until a slot opens
+    return new Promise(resolve => {
+      queue.push({ resolve });
+    });
+  });
+
+  ne.registerResponseFilter((type, response) => {
+    if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
+    activeRequests = Math.max(0, activeRequests - 1);
+    drainQueue();
+  });
+
   player.addEventListener("error",e=>{
     console.error(e.detail);
     ring.style.display="none";
