@@ -168,9 +168,6 @@ async function initPlayer(){
       bufferingGoal:20,
       rebufferingGoal:2,
       bufferBehind:30,
-      // ── 5 PARALLEL CHUNK DOWNLOADS ──
-      segmentPrefetchLimit: 5,
-      // Parallel fetch for both video and audio segments
       maxDisabledTime: 30,
       retryParameters:{
         maxAttempts:4,
@@ -196,38 +193,31 @@ async function initPlayer(){
     abr:{enabled:true,defaultBandwidthEstimate:1000000},
   });
 
-  // ── PARALLEL FETCH NETWORKINGENGINE PLUGIN ──
-  // Override segment requests to dispatch up to 5 in parallel via a queue
+  // ── 5-WORKER ROUND-ROBIN URL REWRITER ──
+  // Each segment request is sent to a different worker, cycling through all 5.
+  // This bypasses per-domain connection limits for true parallel fetching.
+  const WORKERS = [
+    "https://dry-paper-9551.database1806.workers.dev",
+    "https://frosty-snow-1291.database1806.workers.dev",
+    "https://floral-meadow-7240.database1806.workers.dev",
+    "https://fancy-fire-3e33.database1806.workers.dev",
+    "https://old-king-95a0.database1806.workers.dev",
+  ];
+  let workerIdx = 0;
+
   const ne = player.getNetworkingEngine();
-  const PARALLEL = 5;
-  let activeRequests = 0;
-  const queue = [];
-
-  function drainQueue() {
-    while (queue.length > 0 && activeRequests < PARALLEL) {
-      const { resolve } = queue.shift();
-      activeRequests++;
-      resolve();
-    }
-  }
-
   ne.registerRequestFilter((type, request) => {
-    // Apply parallel limiting to segment requests (type 1 = SEGMENT)
     if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
-    if (activeRequests < PARALLEL) {
-      activeRequests++;
-      return; // proceed immediately
+    const uris = request.uris;
+    for (let i = 0; i < uris.length; i++) {
+      try {
+        const u = new URL(uris[i]);
+        // Replace the origin with the next worker in round-robin order
+        const worker = WORKERS[workerIdx % WORKERS.length];
+        workerIdx++;
+        uris[i] = worker + u.pathname + u.search;
+      } catch(e) { /* leave malformed URLs untouched */ }
     }
-    // Queue the request until a slot opens
-    return new Promise(resolve => {
-      queue.push({ resolve });
-    });
-  });
-
-  ne.registerResponseFilter((type, response) => {
-    if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
-    activeRequests = Math.max(0, activeRequests - 1);
-    drainQueue();
   });
 
   player.addEventListener("error",e=>{
