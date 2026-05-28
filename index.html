@@ -102,9 +102,6 @@ video::-webkit-media-controls{display:none!important}
   </div>
 </div>
 <script>
-// ── CONFIG — YOUR KOYEB PROXY ──
-const PROXY = "https://spotty-marna-test47-8eb483a0.koyeb.app";
-
 // ── READ MPD URL FROM ?src= PARAM ──
 const params = new URLSearchParams(location.search);
 const MPD = params.get("src") || "";
@@ -138,6 +135,7 @@ const icExit      = document.getElementById("icExit");
 const errBox      = document.getElementById("errBox");
 const errMsg      = document.getElementById("errMsg");
 
+// storage keys unique per URL
 const POS_KEY   = "sp_pos_"  + btoa(MPD).slice(0,14);
 const AUDIO_KEY = "sp_aud_"  + btoa(MPD).slice(0,14);
 
@@ -170,48 +168,54 @@ async function initPlayer(){
       bufferingGoal:20,
       rebufferingGoal:2,
       bufferBehind:30,
-      maxDisabledTime:30,
+      maxDisabledTime: 30,
       retryParameters:{
         maxAttempts:4,
         baseDelay:1000,
         backoffFactor:2,
-        timeout:0,
-        stallTimeout:5000,
-        connectionTimeout:10000,
+        // Allow up to 5 concurrent fetch attempts
+        timeout: 0,
+        stallTimeout: 5000,
+        connectionTimeout: 10000,
       },
     },
+    // Parallel manifest and segment fetching
     manifest:{
       retryParameters:{
         maxAttempts:4,
         baseDelay:1000,
         backoffFactor:2,
-        timeout:0,
-        stallTimeout:5000,
-        connectionTimeout:10000,
+        timeout: 0,
+        stallTimeout: 5000,
+        connectionTimeout: 10000,
       },
     },
     abr:{enabled:true,defaultBandwidthEstimate:1000000},
   });
 
-  // ── REWRITE ALL REQUESTS THROUGH YOUR KOYEB PROXY ──
-  // - If URL is already on PROXY → leave it alone
-  // - If pathname starts with /file_by_id/ → pass as-is to PROXY
-  // - Everything else (segment paths) → PROXY/file/<path>
+  // ── 5-WORKER ROUND-ROBIN URL REWRITER ──
+  // Each segment request is sent to a different worker, cycling through all 5.
+  // This bypasses per-domain connection limits for true parallel fetching.
+  const WORKERS = [
+    "https://dry-paper-9551.database1806.workers.dev",
+    "https://frosty-snow-1291.database1806.workers.dev",
+    "https://floral-meadow-7240.database1806.workers.dev",
+    "https://fancy-fire-3e33.database1806.workers.dev",
+    "https://old-king-95a0.database1806.workers.dev",
+  ];
+  let workerIdx = 0;
+
   const ne = player.getNetworkingEngine();
   ne.registerRequestFilter((type, request) => {
+    if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
     const uris = request.uris;
     for (let i = 0; i < uris.length; i++) {
       try {
         const u = new URL(uris[i]);
-        // Already on proxy — leave alone
-        if (u.host === new URL(PROXY).host) continue;
-        // file_by_id URLs — route directly
-        if (u.pathname.startsWith("/file_by_id/")) {
-          uris[i] = PROXY + u.pathname + u.search;
-        } else {
-          // Segment/manifest paths — route through /file/
-          uris[i] = PROXY + "/file" + u.pathname + u.search;
-        }
+        // Replace the origin with the next worker in round-robin order
+        const worker = WORKERS[workerIdx % WORKERS.length];
+        workerIdx++;
+        uris[i] = worker + u.pathname + u.search;
       } catch(e) { /* leave malformed URLs untouched */ }
     }
   });
@@ -219,7 +223,7 @@ async function initPlayer(){
   player.addEventListener("error",e=>{
     console.error(e.detail);
     ring.style.display="none";
-    errMsg.textContent="Playback error — "+(e.detail?.code||"unknown");
+    errMsg.textContent="Playback error — "+( e.detail?.code||"unknown");
     errBox.style.display="flex";
   });
   player.addEventListener("buffering",e=>{ring.style.display=e.buffering?"block":"none"});
@@ -337,7 +341,7 @@ audioBtn.addEventListener("click",e=>{e.stopPropagation();panelOpen?closePanel()
 document.addEventListener("click",()=>closePanel());
 audioPanel.addEventListener("click",e=>e.stopPropagation());
 
-// ── NETWORK SPEED CHECK ──
+// ── NETWORK CHECK ──
 async function checkNetwork(){
   if(!MPD)return;
   try{
