@@ -102,6 +102,55 @@ video::-webkit-media-controls{display:none!important}
   </div>
 </div>
 <script>
+// ══════════════════════════════════════════════════════
+// PROXY LIST — add/remove as needed
+// If the current proxy fails, automatically tries next
+// ══════════════════════════════════════════════════════
+const PROXIES = [
+  "https://dry-paper-9551.database1806.workers.dev",
+  "https://frosty-snow-1291.database1806.workers.dev",
+  "https://floral-meadow-7240.database1806.workers.dev",
+  "https://fancy-fire-3e33.database1806.workers.dev",
+  "https://old-king-95a0.database1806.workers.dev",
+  "https://spotty-marna-test47-8eb483a0.koyeb.app",
+];
+
+// Track which proxy is currently active and which are dead
+let currentProxyIdx = 0;
+const deadProxies = new Set();
+
+function getActiveProxy() {
+  // Find next alive proxy starting from currentProxyIdx
+  for (let i = 0; i < PROXIES.length; i++) {
+    const idx = (currentProxyIdx + i) % PROXIES.length;
+    if (!deadProxies.has(idx)) return { proxy: PROXIES[idx], idx };
+  }
+  // All dead — reset and try again from beginning
+  deadProxies.clear();
+  return { proxy: PROXIES[0], idx: 0 };
+}
+
+function markProxyDead(idx) {
+  deadProxies.add(idx);
+  console.warn(`Proxy ${PROXIES[idx]} marked dead. Dead: ${deadProxies.size}/${PROXIES.length}`);
+  // Advance to next
+  currentProxyIdx = (idx + 1) % PROXIES.length;
+}
+
+function buildProxyUrl(proxy, originalUrl) {
+  try {
+    const u = new URL(originalUrl);
+    // Already on a proxy — extract original path and reroute
+    if (PROXIES.some(p => u.host === new URL(p).host)) {
+      return proxy + u.pathname + u.search;
+    }
+    // External URL — route through /file/
+    return proxy + "/file" + u.pathname + u.search;
+  } catch(e) {
+    return originalUrl;
+  }
+}
+
 // ── READ MPD URL FROM ?src= PARAM ──
 const params = new URLSearchParams(location.search);
 const MPD = params.get("src") || "";
@@ -135,9 +184,7 @@ const icExit      = document.getElementById("icExit");
 const errBox      = document.getElementById("errBox");
 const errMsg      = document.getElementById("errMsg");
 
-// storage keys unique per URL
-const POS_KEY   = "sp_pos_"  + btoa(MPD).slice(0,14);
-const AUDIO_KEY = "sp_aud_"  + btoa(MPD).slice(0,14);
+const AUDIO_KEY = "sp_aud_" + btoa(MPD).slice(0,14);
 
 // ── TOAST ──
 let toastT;
@@ -163,88 +210,91 @@ const player = new shaka.Player();
 async function initPlayer(){
   if(!MPD) return;
   await player.attach(v);
+
   player.configure({
     streaming:{
-      bufferingGoal:20,
-      rebufferingGoal:2,
-      bufferBehind:30,
+      bufferingGoal: 20,
+      rebufferingGoal: 2,
+      bufferBehind: 30,
       maxDisabledTime: 30,
       retryParameters:{
-        maxAttempts:4,
-        baseDelay:1000,
-        backoffFactor:2,
-        // Allow up to 5 concurrent fetch attempts
+        maxAttempts: 1,     // Don't retry — we handle fallback ourselves
+        baseDelay: 500,
+        backoffFactor: 2,
         timeout: 0,
         stallTimeout: 5000,
         connectionTimeout: 10000,
       },
     },
-    // Parallel manifest and segment fetching
     manifest:{
       retryParameters:{
-        maxAttempts:4,
-        baseDelay:1000,
-        backoffFactor:2,
+        maxAttempts: 1,
+        baseDelay: 500,
+        backoffFactor: 2,
         timeout: 0,
         stallTimeout: 5000,
         connectionTimeout: 10000,
       },
     },
-    abr:{enabled:true,defaultBandwidthEstimate:1000000},
+    abr:{ enabled: true, defaultBandwidthEstimate: 1000000 },
   });
 
-  // ── 5-WORKER ROUND-ROBIN URL REWRITER ──
-  // Each segment request is sent to a different worker, cycling through all 5.
-  // This bypasses per-domain connection limits for true parallel fetching.
-  const WORKERS = [
-    "https://dry-paper-9551.database1806.workers.dev",
-    "https://frosty-snow-1291.database1806.workers.dev",
-    "https://floral-meadow-7240.database1806.workers.dev",
-    "https://fancy-fire-3e33.database1806.workers.dev",
-    "https://old-king-95a0.database1806.workers.dev",
-  ];
-  let workerIdx = 0;
-
   const ne = player.getNetworkingEngine();
+
+  // ── REQUEST FILTER — route through active proxy ───────────────────────────
   ne.registerRequestFilter((type, request) => {
-    if (type !== shaka.net.NetworkingEngine.RequestType.SEGMENT) return;
+    const { proxy } = getActiveProxy();
     const uris = request.uris;
     for (let i = 0; i < uris.length; i++) {
-      try {
-        const u = new URL(uris[i]);
-        // Replace the origin with the next worker in round-robin order
-        const worker = WORKERS[workerIdx % WORKERS.length];
-        workerIdx++;
-        uris[i] = worker + u.pathname + u.search;
-      } catch(e) { /* leave malformed URLs untouched */ }
+      uris[i] = buildProxyUrl(proxy, uris[i]);
     }
   });
 
-  player.addEventListener("error",e=>{
+  // ── RESPONSE FILTER — detect failures and switch proxy ───────────────────
+  ne.registerResponseFilter((type, response) => {
+    // Non-2xx from proxy = proxy is down/overloaded → mark dead
+    if (response.status && response.status >= 500) {
+      const { idx } = getActiveProxy();
+      markProxyDead(idx);
+      showToast("Switching proxy…", 1500);
+      // Throw so Shaka retries the segment (which will hit the new proxy)
+      throw new Error("Proxy error " + response.status);
+    }
+  });
+
+  player.addEventListener("error", e => {
     console.error(e.detail);
-    ring.style.display="none";
-    errMsg.textContent="Playback error — "+( e.detail?.code||"unknown");
-    errBox.style.display="flex";
+    // On playback error, try switching proxy before giving up
+    const { idx } = getActiveProxy();
+    if (deadProxies.size < PROXIES.length) {
+      markProxyDead(idx);
+      showToast("Retrying with next proxy…", 2000);
+    } else {
+      ring.style.display = "none";
+      errMsg.textContent = "Playback error — all proxies failed (" + (e.detail?.code||"unknown") + ")";
+      errBox.style.display = "flex";
+    }
   });
-  player.addEventListener("buffering",e=>{ring.style.display=e.buffering?"block":"none"});
-  player.addEventListener("trackschanged",setupAudioTracks);
-  player.addEventListener("adaptation",()=>{
-    const t=player.getVariantTracks().find(t=>t.active);
-    if(t&&t.height) showToast(t.height+"p · "+Math.round(t.bandwidth/1000)+"kbps",1400);
+
+  player.addEventListener("buffering", e => { ring.style.display = e.buffering ? "block" : "none" });
+  player.addEventListener("trackschanged", setupAudioTracks);
+  player.addEventListener("adaptation", () => {
+    const t = player.getVariantTracks().find(t => t.active);
+    if(t && t.height) showToast(t.height + "p · " + Math.round(t.bandwidth/1000) + "kbps", 1400);
   });
-  try{
-    ring.style.display="block";
+
+  try {
+    ring.style.display = "block";
     await player.load(MPD);
-    ring.style.display="none";
-    const saved=parseFloat(localStorage.getItem(POS_KEY));
-    if(saved&&saved>2){v.currentTime=saved;showToast("Resumed from "+fmtTime(saved),2500)}
+    ring.style.display = "none";
     v.play().catch(()=>{});
     setupAudioTracks();
     checkNetwork();
-  }catch(e){
-    console.error(e);ring.style.display="none";
-    errMsg.textContent="Failed to load stream";
-    errBox.style.display="flex";
+  } catch(e) {
+    console.error(e);
+    ring.style.display = "none";
+    errMsg.textContent = "Failed to load stream";
+    errBox.style.display = "flex";
   }
 }
 initPlayer();
@@ -302,11 +352,6 @@ wrap.addEventListener("mousemove",showControls);
 wrap.addEventListener("touchstart",showControls,{passive:true});
 v.addEventListener("pause",()=>wrap.classList.add("show-cursor"));
 v.addEventListener("play",showControls);
-
-// ── SAVE POSITION ──
-function savePos(){const t=v.currentTime;if(t>2)localStorage.setItem(POS_KEY,t)}
-setInterval(savePos,5000);v.addEventListener("pause",savePos);
-v.addEventListener("ended",()=>localStorage.removeItem(POS_KEY));
 
 // ── AUDIO TRACKS ──
 function setupAudioTracks(){
