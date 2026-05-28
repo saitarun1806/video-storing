@@ -103,7 +103,7 @@ video::-webkit-media-controls{display:none!important}
 </div>
 <script>
 // ── CONFIG — YOUR KOYEB PROXY ──
-const PROXY = "http://spotty-marna-test47-8eb483a0.koyeb.app";
+const PROXY = "https://spotty-marna-test47-8eb483a0.koyeb.app";
 
 // ── READ MPD URL FROM ?src= PARAM ──
 const params = new URLSearchParams(location.search);
@@ -193,19 +193,25 @@ async function initPlayer(){
     abr:{enabled:true,defaultBandwidthEstimate:1000000},
   });
 
-  // ── REWRITE ALL SEGMENT/MANIFEST REQUESTS THROUGH YOUR KOYEB PROXY ──
-  // Every URL (regardless of origin) is rewritten to go through your proxy.
-  // The proxy's /file/* route handles the actual fetch from Telegram.
+  // ── REWRITE ALL REQUESTS THROUGH YOUR KOYEB PROXY ──
+  // - If URL is already on PROXY → leave it alone
+  // - If pathname starts with /file_by_id/ → pass as-is to PROXY
+  // - Everything else (segment paths) → PROXY/file/<path>
   const ne = player.getNetworkingEngine();
   ne.registerRequestFilter((type, request) => {
     const uris = request.uris;
     for (let i = 0; i < uris.length; i++) {
       try {
         const u = new URL(uris[i]);
-        // If it's already pointing at your proxy, leave it alone
-        if (u.origin === PROXY) continue;
-        // Rewrite: PROXY/file/<original-path+search>
-        uris[i] = PROXY + "/file" + u.pathname + u.search;
+        // Already on proxy — leave alone
+        if (u.host === new URL(PROXY).host) continue;
+        // file_by_id URLs — route directly
+        if (u.pathname.startsWith("/file_by_id/")) {
+          uris[i] = PROXY + u.pathname + u.search;
+        } else {
+          // Segment/manifest paths — route through /file/
+          uris[i] = PROXY + "/file" + u.pathname + u.search;
+        }
       } catch(e) { /* leave malformed URLs untouched */ }
     }
   });
