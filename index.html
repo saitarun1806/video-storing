@@ -12,6 +12,64 @@
   .video-wrap { width: 100%; height: 100%; position: relative; }
   video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
 
+  /* Buffer overlay */
+  #buffer-overlay {
+    position: absolute; inset: 0; z-index: 30;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.82); gap: 18px;
+    transition: opacity 0.4s;
+  }
+  #buffer-overlay.hidden { opacity: 0; pointer-events: none; }
+
+  .buf-spinner {
+    width: 48px; height: 48px;
+    border: 3px solid rgba(108,99,255,0.25);
+    border-top-color: #6c63ff;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .buf-label {
+    color: #e8e8f0; font-size: 13px; font-weight: 500;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: 0.3px;
+  }
+  .buf-bar-wrap {
+    width: 180px; height: 4px; background: rgba(255,255,255,0.12);
+    border-radius: 4px; overflow: hidden;
+  }
+  .buf-bar {
+    height: 100%; width: 0%; background: #6c63ff;
+    border-radius: 4px; transition: width 0.25s ease;
+  }
+
+  /* Play button overlay shown when preview is ready */
+  #play-overlay {
+    position: absolute; inset: 0; z-index: 25;
+    display: none; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  #play-overlay.visible { display: flex; }
+  .play-btn-circle {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: rgba(108,99,255,0.85);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.15s, background 0.15s;
+    box-shadow: 0 0 0 12px rgba(108,99,255,0.18);
+  }
+  #play-overlay:hover .play-btn-circle {
+    background: #6c63ff; transform: scale(1.08);
+  }
+  .play-icon {
+    width: 0; height: 0;
+    border-style: solid;
+    border-width: 14px 0 14px 26px;
+    border-color: transparent transparent transparent #fff;
+    margin-left: 6px;
+  }
+
   .track-panel-overlay {
     position: absolute; top: 10px; right: 10px; z-index: 20;
     display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
@@ -60,7 +118,20 @@
 </head>
 <body>
 <div class="video-wrap">
-  <video id="video" controls playsinline></video>
+  <video id="video" playsinline></video>
+
+  <!-- shown while buffering the preview -->
+  <div id="buffer-overlay">
+    <div class="buf-spinner"></div>
+    <div class="buf-label" id="buf-label">Buffering preview…</div>
+    <div class="buf-bar-wrap"><div class="buf-bar" id="buf-bar"></div></div>
+  </div>
+
+  <!-- shown once 10 s are buffered, waiting for user click -->
+  <div id="play-overlay">
+    <div class="play-btn-circle"><div class="play-icon"></div></div>
+  </div>
+
   <div class="track-panel-overlay">
     <div class="track-toggle-row">
       <button class="tp-toggle-btn" onclick="toggleDropdown('video-dd','audio-dd')">
@@ -82,8 +153,15 @@
 </div>
 
 <script>
-const video = document.getElementById('video');
+const video        = document.getElementById('video');
+const bufOverlay   = document.getElementById('buffer-overlay');
+const bufBar       = document.getElementById('buf-bar');
+const bufLabel     = document.getElementById('buf-label');
+const playOverlay  = document.getElementById('play-overlay');
+
 let player = null, abrActive = true;
+let previewReady = false;
+const PREVIEW_SEC = 10;   // seconds to silently buffer before showing play button
 
 shaka.polyfill.installAll();
 
@@ -103,20 +181,79 @@ async function initPlayer() {
   player = new shaka.Player(video);
   player.configure({
     streaming: {
-      bufferingGoal: 60, rebufferingGoal: 5,
+      bufferingGoal: 60,
+      rebufferingGoal: 5,
       retryParameters: { maxAttempts: 10, baseDelay: 1000, backoffFactor: 1.3, timeout: 40000 },
     },
   });
 }
 
+/* ---------- preview buffering ---------- */
+
+function tickPreviewProgress() {
+  if (previewReady) return;
+  const buf = video.buffered;
+  let buffered = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf.start(i) <= 0.1) { buffered = buf.end(i); break; }
+  }
+  const pct = Math.min(100, (buffered / PREVIEW_SEC) * 100);
+  bufBar.style.width = pct + '%';
+  bufLabel.textContent = `Buffering preview… ${Math.round(pct)}%`;
+
+  if (buffered >= PREVIEW_SEC) {
+    previewReady = true;
+    showPlayOverlay();
+  } else {
+    requestAnimationFrame(tickPreviewProgress);
+  }
+}
+
+function showPlayOverlay() {
+  bufOverlay.classList.add('hidden');
+  playOverlay.classList.add('visible');
+  // tracks are already loaded at this point
+  renderQualityTracks();
+  renderAudioTracks();
+}
+
+// User clicks the big play button → unpause + show native controls
+playOverlay.addEventListener('click', () => {
+  playOverlay.classList.remove('visible');
+  video.controls = true;
+  video.play().catch(() => {});
+});
+
+/* ---------- load ---------- */
+
 async function loadVideo(url) {
+  previewReady = false;
+  bufOverlay.classList.remove('hidden');
+  bufBar.style.width = '0%';
+  bufLabel.textContent = 'Buffering preview…';
+  playOverlay.classList.remove('visible');
+  video.controls = false;
+
   await initPlayer();
   try {
     await player.load(url);
-    renderQualityTracks();
-    renderAudioTracks();
-  } catch (e) { console.error(e); }
+
+    // Pause immediately after load so we only buffer, don't play
+    video.pause();
+
+    // Start silent buffering; browser will fill the buffer even while paused
+    requestAnimationFrame(tickPreviewProgress);
+
+    // Fallback: if bufferedEnd doesn't reach 10 s within 20 s, show play anyway
+    setTimeout(() => { if (!previewReady) showPlayOverlay(); }, 20000);
+
+  } catch (e) {
+    console.error(e);
+    bufLabel.textContent = 'Failed to load stream.';
+  }
 }
+
+/* ---------- quality / audio tracks ---------- */
 
 function formatBitrate(bps) {
   if (!bps) return '';
