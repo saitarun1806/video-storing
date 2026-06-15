@@ -16,122 +16,117 @@
     --muted: #6b6b8a;
     --radius: 12px;
   }
-  html, body {
-    background: var(--bg);
-    width: 100%; height: 100%;
-  }
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
+  html, body { background: var(--bg); width: 100%; height: 100%; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 10px; }
   .video-wrap {
-    width: 100%;
-    max-width: 900px;
+    width: 100%; max-width: 900px;
     background: #000;
     border-radius: var(--radius);
     overflow: hidden;
     border: 1px solid var(--border);
     position: relative;
   }
-  video {
-    width: 100%;
-    display: block;
-    max-height: 506px;
-    background: #000;
-  }
+  video { width: 100%; display: block; max-height: 506px; background: #000; }
+
   .track-panel-overlay {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    z-index: 20;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    align-items: flex-end;
+    position: absolute; top: 10px; right: 10px; z-index: 20;
+    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
   }
   .track-toggle-row { display: flex; gap: 6px; }
   .tp-toggle-btn {
     background: rgba(10,10,15,0.82);
     border: 1px solid rgba(108,99,255,0.5);
-    color: var(--text);
-    border-radius: 7px;
-    font-size: 11px;
-    font-weight: 600;
-    padding: 5px 10px;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
+    color: var(--text); border-radius: 7px;
+    font-size: 11px; font-weight: 600; padding: 5px 10px;
+    cursor: pointer; backdrop-filter: blur(6px);
     transition: background 0.15s, border-color 0.15s;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    letter-spacing: 0.3px;
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex; align-items: center; gap: 5px;
+    letter-spacing: 0.3px; font-family: 'Segoe UI', system-ui, sans-serif;
   }
   .tp-toggle-btn:hover { background: rgba(108,99,255,0.3); border-color: var(--accent); }
-  .tp-dot {
-    width: 5px; height: 5px; border-radius: 50%;
-    background: var(--accent2);
-    display: none;
-  }
+  .tp-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent2); display: none; }
   .tp-dropdown {
-    background: rgba(13,13,20,0.97);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 8px;
-    display: none;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 160px;
-    backdrop-filter: blur(8px);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    background: rgba(13,13,20,0.97); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px; display: none;
+    flex-direction: column; gap: 4px; min-width: 160px;
+    backdrop-filter: blur(8px); box-shadow: 0 4px 24px rgba(0,0,0,0.6);
   }
   .tp-dropdown.open { display: flex; }
   .tp-dropdown-title {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: var(--muted);
-    text-transform: uppercase;
-    padding: 2px 4px 6px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 2px;
+    font-size: 10px; font-weight: 700; letter-spacing: 1px; color: var(--muted);
+    text-transform: uppercase; padding: 2px 4px 6px;
+    border-bottom: 1px solid var(--border); margin-bottom: 2px;
     font-family: 'Segoe UI', system-ui, sans-serif;
   }
   .tp-item {
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    font-size: 12px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    text-align: left;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    transition: background 0.12s, color 0.12s;
-    white-space: nowrap;
+    background: transparent; border: none; color: var(--muted);
+    font-size: 12px; padding: 6px 8px; border-radius: 6px;
+    cursor: pointer; text-align: left; display: flex; align-items: center;
+    gap: 7px; transition: background 0.12s, color 0.12s; white-space: nowrap;
     font-family: 'Segoe UI', system-ui, sans-serif;
   }
   .tp-item:hover { background: rgba(108,99,255,0.18); color: var(--text); }
   .tp-item.active { background: var(--accent); color: #fff; }
   .tp-item .tp-badge {
-    font-size: 9px;
-    background: rgba(255,255,255,0.15);
-    border-radius: 3px;
-    padding: 1px 5px;
-    font-weight: 600;
-    margin-left: auto;
+    font-size: 9px; background: rgba(255,255,255,0.15);
+    border-radius: 3px; padding: 1px 5px; font-weight: 600; margin-left: auto;
   }
   .tp-item.active .tp-badge { background: rgba(255,255,255,0.25); }
+
+  /* Log panel */
+  .log-wrap {
+    width: 100%; max-width: 900px;
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    background: #111118;
+  }
+  .log-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--muted);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .log-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted); display: inline-block;
+    transition: background 0.3s;
+  }
+  .log-dot.active { background: #4ade80; box-shadow: 0 0 4px #4ade80; }
+  .log-dot.error  { background: #f87171; box-shadow: 0 0 4px #f87171; }
+  .log-clear {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    font-size: 10px; padding: 3px 8px; border-radius: 5px; cursor: pointer;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .log-clear:hover { border-color: var(--accent); color: var(--text); }
+  .log-body {
+    height: 120px; overflow-y: auto; padding: 8px 12px;
+    font-family: monospace; font-size: 11px; line-height: 1.7;
+  }
+  .log-body::-webkit-scrollbar { width: 4px; }
+  .log-body::-webkit-scrollbar-track { background: transparent; }
+  .log-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-line { display: flex; gap: 8px; }
+  .log-time { color: #3a3a5c; flex-shrink: 0; }
+  .log-msg  { color: var(--muted); }
+  .log-msg.info    { color: var(--accent2); }
+  .log-msg.success { color: #4ade80; }
+  .log-msg.error   { color: #f87171; }
+  .log-msg.warn    { color: #facc15; }
 </style>
 </head>
 <body>
 
 <div class="video-wrap">
   <video id="video" controls playsinline></video>
-
   <div class="track-panel-overlay">
     <div class="track-toggle-row">
       <button class="tp-toggle-btn" onclick="toggleDropdown('video-dd','audio-dd')">
@@ -152,9 +147,46 @@
   </div>
 </div>
 
+<div class="log-wrap">
+  <div class="log-header">
+    <div class="log-title">
+      <span class="log-dot" id="log-dot"></span>
+      Player Log
+    </div>
+    <button class="log-clear" onclick="clearLog()">Clear</button>
+  </div>
+  <div class="log-body" id="log-body"></div>
+</div>
+
 <script>
+// ── Logging ──────────────────────────────────────────
+function log(msg, type = 'info') {
+  const body = document.getElementById('log-body');
+  const dot  = document.getElementById('log-dot');
+  const now  = new Date();
+  const ts   = now.toTimeString().slice(0,8);
+
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${ts}</span><span class="log-msg ${type}">${msg}</span>`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+
+  dot.className = 'log-dot' + (type === 'error' ? ' error' : type === 'success' ? ' active' : '');
+}
+function clearLog() {
+  document.getElementById('log-body').innerHTML = '';
+  document.getElementById('log-dot').className = 'log-dot';
+}
+
+// Suppress native console noise from Shaka in production
+const _origError = console.error.bind(console);
+console.error = (...args) => { /* silenced */ };
+console.warn  = (...args) => { /* silenced */ };
+
+// ── Player ───────────────────────────────────────────
 const video = document.getElementById('video');
-let player = null;
+let player   = null;
 let abrActive = true;
 
 shaka.polyfill.installAll();
@@ -173,23 +205,53 @@ document.addEventListener('click', (e) => {
 async function initPlayer() {
   if (player) { await player.destroy(); player = null; }
   player = new shaka.Player(video);
+
   player.configure({
     streaming: {
       bufferingGoal: 60, rebufferingGoal: 5,
       retryParameters: { maxAttempts: 10, baseDelay: 1000, backoffFactor: 1.3, timeout: 40000 },
     },
   });
-  player.addEventListener('adaptation', () => { if (abrActive) {} });
+
+  // Send correct Origin & Referer so the worker allows the request
+  player.getNetworkingEngine().registerRequestFilter((type, request) => {
+    request.headers['Origin']  = 'https://mytoontopia.com';
+    request.headers['Referer'] = 'https://mytoontopia.com/';
+  });
+
+  player.addEventListener('buffering', (e) => {
+    if (e.buffering) log('Buffering…', 'warn');
+    else log('Buffering done', 'info');
+  });
+
+  player.addEventListener('adaptation', () => {
+    if (!abrActive) return;
+    const active = player.getVariantTracks().find(t => t.active);
+    if (active) log(`ABR → ${qualityLabel(active)} @ ${formatBitrate(active.bandwidth)}`, 'info');
+  });
+
+  player.addEventListener('error', (e) => {
+    log(`Error ${e.detail?.code}: ${e.detail?.message || 'Playback error'}`, 'error');
+  });
+
+  video.addEventListener('playing', () => log('Playing ▶', 'success'), { once: false });
+  video.addEventListener('pause',   () => log('Paused ⏸', 'info'),    { once: false });
+  video.addEventListener('ended',   () => log('Ended ⏹', 'info'),     { once: false });
+  video.addEventListener('waiting', () => log('Waiting for data…', 'warn'), { once: false });
 }
 
 async function loadVideo(url) {
+  log(`Loading: ${url}`, 'info');
   await initPlayer();
   try {
     await player.load(url);
+    log('Manifest loaded ✓', 'success');
     video.play();
     renderQualityTracks();
     renderAudioTracks();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    log(`Failed to load — ${e.message || e}`, 'error');
+  }
 }
 
 function formatBitrate(bps) {
@@ -213,6 +275,7 @@ function renderQualityTracks() {
   const unique = [...seen.values()].sort((a,b) => (b.height||0)-(a.height||0));
   if (!unique.length) { container.innerHTML = '<span style="color:var(--muted);font-size:12px;padding:4px 8px">No tracks</span>'; return; }
 
+  log(`${unique.length} video track(s) found`, 'info');
   document.getElementById('video-dot').style.display = 'inline-block';
 
   const autoBtn = document.createElement('button');
@@ -223,11 +286,12 @@ function renderQualityTracks() {
     player.configure({ abr: { enabled: true } });
     container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
     autoBtn.classList.add('active');
+    log('Quality set to Auto (ABR)', 'info');
   };
   container.appendChild(autoBtn);
 
   unique.forEach(track => {
-    const btn = document.createElement('button');
+    const btn  = document.createElement('button');
     const qlbl = qualityLabel(track);
     const blbl = formatBitrate(track.bandwidth);
     btn.className = 'tp-item';
@@ -239,6 +303,7 @@ function renderQualityTracks() {
       if (match) player.selectVariantTrack(match, true);
       container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      log(`Quality locked: ${qlbl}${blbl ? ' @ '+blbl : ''}`, 'info');
     };
     container.appendChild(btn);
   });
@@ -260,6 +325,8 @@ function renderAudioTracks() {
     if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label||'' }); }
   }
   if (!langs.length) { container.innerHTML = '<span style="color:var(--muted);font-size:12px;padding:4px 8px">No tracks</span>'; return; }
+
+  log(`${langs.length} audio track(s): ${langs.map(l=>langLabel(l.language,l.label)).join(', ')}`, 'info');
   document.getElementById('audio-dot').style.display = 'inline-block';
 
   const active = tracks.find(t => t.active);
@@ -273,15 +340,20 @@ function renderAudioTracks() {
       document.querySelectorAll('#audio-list .tp-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       player.selectAudioLanguage(language);
+      log(`Audio → ${langLabel(language, label)}`, 'info');
     };
     container.appendChild(btn);
   });
 }
 
-// Load from ?url= query param only
-const params = new URLSearchParams(window.location.search);
+// Auto-load from ?url= param
+const params  = new URLSearchParams(window.location.search);
 const autoUrl = params.get('url');
-if (autoUrl) loadVideo(autoUrl);
+if (autoUrl) {
+  loadVideo(autoUrl.trim());
+} else {
+  log('No ?url= param found', 'warn');
+}
 </script>
 </body>
 </html>
