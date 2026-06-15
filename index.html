@@ -3,407 +3,285 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Player</title>
-<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.7.11/dist/shaka-player.compiled.js"></script>
+<title>Stream Player</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.min.js"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif}
-.wrap{width:100%;height:100%;position:relative;background:#000;cursor:none}
-.wrap.show-cursor{cursor:default}
-video{width:100%;height:100%;object-fit:contain;background:#000;display:block}
-video::-webkit-media-controls{display:none!important}
-.spinner-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:30;pointer-events:none}
-.ring{width:42px;height:42px;border:2.5px solid rgba(255,255,255,0.15);border-top-color:rgba(255,255,255,0.9);border-radius:50%;animation:spin .7s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.toast{position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.72);color:#fff;font-size:12px;padding:5px 16px;border-radius:30px;pointer-events:none;opacity:0;transition:opacity .35s;white-space:nowrap}
-.toast.on{opacity:1}
-.controls{position:absolute;bottom:0;left:0;right:0;z-index:40;padding:0 14px 14px;background:linear-gradient(transparent,rgba(0,0,0,0.75) 60%);opacity:0;transition:opacity .3s}
-.wrap.show-cursor .controls{opacity:1}
-.prog-wrap{position:relative;height:18px;display:flex;align-items:center;cursor:pointer;margin-bottom:6px}
-.prog-track{width:100%;height:3px;background:rgba(255,255,255,0.2);border-radius:2px;position:relative;transition:height .15s}
-.prog-wrap:hover .prog-track{height:5px}
-.prog-buf{position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.3);border-radius:2px;pointer-events:none}
-.prog-fill{position:absolute;left:0;top:0;height:100%;background:#fff;border-radius:2px;pointer-events:none}
-.prog-thumb{position:absolute;top:50%;width:13px;height:13px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;opacity:0;transition:opacity .15s}
-.prog-wrap:hover .prog-thumb{opacity:1}
-.bottom-row{display:flex;align-items:center;gap:10px}
-.btn{background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;opacity:.9;transition:opacity .15s;-webkit-tap-highlight-color:transparent;flex-shrink:0}
-.btn:hover{opacity:1}
-.btn svg{display:block}
-.time{color:rgba(255,255,255,0.85);font-size:12px;white-space:nowrap;margin-right:2px}
-.spacer{flex:1}
-.vol-wrap{display:flex;align-items:center;gap:6px}
-.vol-slider{-webkit-appearance:none;appearance:none;width:64px;height:3px;background:rgba(255,255,255,0.25);border-radius:2px;outline:none;cursor:pointer}
-.vol-slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:#fff;cursor:pointer}
-.vol-slider::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:#fff;border:none;cursor:pointer}
-.pill-btn{background:rgba(255,255,255,0.12);border:none;color:#fff;font-size:11px;padding:4px 9px;border-radius:20px;cursor:pointer;display:flex;align-items:center;gap:4px;-webkit-tap-highlight-color:transparent;white-space:nowrap;transition:background .15s}
-.pill-btn:hover{background:rgba(255,255,255,0.22)}
-.pill-btn svg{flex-shrink:0}
-.panel{position:absolute;bottom:58px;right:14px;z-index:50;background:rgba(16,16,16,0.95);border-radius:10px;overflow:hidden;min-width:160px;transform:translateY(6px);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
-.panel.open{opacity:1;transform:translateY(0);pointer-events:all}
-.panel-item{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;color:#ddd;font-size:12px;text-align:left;padding:10px 14px;cursor:pointer;transition:background .12s;white-space:nowrap}
-.panel-item:hover{background:rgba(255,255,255,0.08)}
-.panel-item.active{color:#fff;font-weight:600}
-.panel-item.active .dot{opacity:1}
-.dot{width:6px;height:6px;border-radius:50%;background:#4fc3f7;flex-shrink:0;opacity:0;transition:opacity .15s}
-.panel-label{font-size:10px;color:rgba(255,255,255,0.4);padding:7px 14px 3px;text-transform:uppercase;letter-spacing:.06em}
-.net-badge{position:absolute;top:14px;right:14px;z-index:45;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;padding:4px 10px;border-radius:20px;pointer-events:none;display:flex;align-items:center;gap:5px;opacity:0;transition:opacity .4s}
-.ndot{width:7px;height:7px;border-radius:50%;background:#888;flex-shrink:0;transition:background .5s}
-.ndot.g{background:#4caf50}.ndot.y{background:#ff9800}.ndot.r{background:#f44336}
-.err{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;color:rgba(255,255,255,0.7);font-size:14px;gap:10px;z-index:60}
-.err svg{opacity:.5}
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0a0a0f;
+    --border: #1f1f2e;
+    --accent: #6c63ff;
+    --accent2: #a78bfa;
+    --text: #e8e8f0;
+    --muted: #6b6b8a;
+    --radius: 12px;
+  }
+  html, body {
+    background: var(--bg);
+    width: 100%; height: 100%;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .video-wrap {
+    width: 100%;
+    max-width: 900px;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    position: relative;
+  }
+  video {
+    width: 100%;
+    display: block;
+    max-height: 506px;
+    background: #000;
+  }
+  .track-panel-overlay {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+  }
+  .track-toggle-row { display: flex; gap: 6px; }
+  .tp-toggle-btn {
+    background: rgba(10,10,15,0.82);
+    border: 1px solid rgba(108,99,255,0.5);
+    color: var(--text);
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 10px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    transition: background 0.15s, border-color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    letter-spacing: 0.3px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  .tp-toggle-btn:hover { background: rgba(108,99,255,0.3); border-color: var(--accent); }
+  .tp-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--accent2);
+    display: none;
+  }
+  .tp-dropdown {
+    background: rgba(13,13,20,0.97);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 160px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  }
+  .tp-dropdown.open { display: flex; }
+  .tp-dropdown-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+    padding: 2px 4px 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2px;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  .tp-item {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: background 0.12s, color 0.12s;
+    white-space: nowrap;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  .tp-item:hover { background: rgba(108,99,255,0.18); color: var(--text); }
+  .tp-item.active { background: var(--accent); color: #fff; }
+  .tp-item .tp-badge {
+    font-size: 9px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-weight: 600;
+    margin-left: auto;
+  }
+  .tp-item.active .tp-badge { background: rgba(255,255,255,0.25); }
 </style>
 </head>
 <body>
-<div class="wrap" id="wrap">
-  <video id="v" playsinline></video>
-  <div class="spinner-wrap"><div class="ring" id="ring" style="display:none"></div></div>
-  <div class="toast" id="toast"></div>
-  <div class="net-badge" id="netBadge"><div class="ndot" id="ndot"></div><span id="netLbl"></span></div>
-  <div class="err" id="errBox">
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    <span id="errMsg">Unable to load video</span>
-  </div>
-  <div class="controls" id="controls">
-    <div class="prog-wrap" id="progWrap">
-      <div class="prog-track">
-        <div class="prog-buf" id="progBuf"></div>
-        <div class="prog-fill" id="progFill"></div>
-        <div class="prog-thumb" id="progThumb"></div>
-      </div>
-    </div>
-    <div class="bottom-row">
-      <button class="btn" id="btnPlay" aria-label="Play/Pause">
-        <svg id="icPlay" width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
-        <svg id="icPause" width="22" height="22" viewBox="0 0 24 24" fill="white" style="display:none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+
+<div class="video-wrap">
+  <video id="video" controls playsinline></video>
+
+  <div class="track-panel-overlay">
+    <div class="track-toggle-row">
+      <button class="tp-toggle-btn" onclick="toggleDropdown('video-dd','audio-dd')">
+        🎬 Video <span class="tp-dot" id="video-dot"></span>
       </button>
-      <div class="vol-wrap">
-        <button class="btn" id="btnMute" aria-label="Mute">
-          <svg id="icVol" width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
-          <svg id="icMute" width="18" height="18" viewBox="0 0 24 24" fill="white" style="display:none"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
-        </button>
-        <input type="range" class="vol-slider" id="volSlider" min="0" max="1" step="0.02" value="1">
-      </div>
-      <span class="time" id="timeDisp">0:00 / 0:00</span>
-      <div class="spacer"></div>
-      <button class="pill-btn" id="audioBtn" style="display:none" aria-label="Audio track">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
-        <span id="audioBtnLbl">Audio</span>
-      </button>
-      <button class="btn" id="btnFs" aria-label="Fullscreen">
-        <svg id="icFs" width="19" height="19" viewBox="0 0 24 24" fill="white"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
-        <svg id="icExit" width="19" height="19" viewBox="0 0 24 24" fill="white" style="display:none"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+      <button class="tp-toggle-btn" onclick="toggleDropdown('audio-dd','video-dd')">
+        🔊 Audio <span class="tp-dot" id="audio-dot"></span>
       </button>
     </div>
-  </div>
-  <div class="panel" id="audioPanel">
-    <div class="panel-label">Audio Track</div>
-    <div id="audioList"></div>
+    <div class="tp-dropdown" id="video-dd">
+      <div class="tp-dropdown-title">Video Quality</div>
+      <div id="quality-list"><span style="color:var(--muted);font-size:12px;padding:4px 8px">Loading…</span></div>
+    </div>
+    <div class="tp-dropdown" id="audio-dd">
+      <div class="tp-dropdown-title">Audio Language</div>
+      <div id="audio-list"><span style="color:var(--muted);font-size:12px;padding:4px 8px">Loading…</span></div>
+    </div>
   </div>
 </div>
+
 <script>
-// ══════════════════════════════════════════════════════
-// PROXY LIST — add/remove as needed
-// If the current proxy fails, automatically tries next
-// ══════════════════════════════════════════════════════
-const PROXIES = [
-  
-  "https://frosty-snow-1291.database1806.workers.dev",
-  "https://floral-meadow-7240.database1806.workers.dev",
-  "https://fancy-fire-3e33.database1806.workers.dev",
-  "https://old-king-95a0.database1806.workers.dev",
-  "https://spotty-marna-test47-8eb483a0.koyeb.app",
-];
+const video = document.getElementById('video');
+let player = null;
+let abrActive = true;
 
-// Track which proxy is currently active and which are dead
-let currentProxyIdx = 0;
-const deadProxies = new Set();
-
-function getActiveProxy() {
-  // Find next alive proxy starting from currentProxyIdx
-  for (let i = 0; i < PROXIES.length; i++) {
-    const idx = (currentProxyIdx + i) % PROXIES.length;
-    if (!deadProxies.has(idx)) return { proxy: PROXIES[idx], idx };
-  }
-  // All dead — reset and try again from beginning
-  deadProxies.clear();
-  return { proxy: PROXIES[0], idx: 0 };
-}
-
-function markProxyDead(idx) {
-  deadProxies.add(idx);
-  console.warn(`Proxy ${PROXIES[idx]} marked dead. Dead: ${deadProxies.size}/${PROXIES.length}`);
-  // Advance to next
-  currentProxyIdx = (idx + 1) % PROXIES.length;
-}
-
-function buildProxyUrl(proxy, originalUrl) {
-  try {
-    const u = new URL(originalUrl);
-    // Already on a proxy — extract original path and reroute
-    if (PROXIES.some(p => u.host === new URL(p).host)) {
-      return proxy + u.pathname + u.search;
-    }
-    // External URL — route through /file/
-    return proxy + "/file" + u.pathname + u.search;
-  } catch(e) {
-    return originalUrl;
-  }
-}
-
-// ── READ MPD URL FROM ?src= PARAM ──
-const params = new URLSearchParams(location.search);
-const MPD = params.get("src") || "";
-
-const wrap        = document.getElementById("wrap");
-const v           = document.getElementById("v");
-const ring        = document.getElementById("ring");
-const toast       = document.getElementById("toast");
-const netBadge    = document.getElementById("netBadge");
-const ndot        = document.getElementById("ndot");
-const netLbl      = document.getElementById("netLbl");
-const progWrap    = document.getElementById("progWrap");
-const progBuf     = document.getElementById("progBuf");
-const progFill    = document.getElementById("progFill");
-const progThumb   = document.getElementById("progThumb");
-const btnPlay     = document.getElementById("btnPlay");
-const icPlay      = document.getElementById("icPlay");
-const icPause     = document.getElementById("icPause");
-const btnMute     = document.getElementById("btnMute");
-const icVol       = document.getElementById("icVol");
-const icMute      = document.getElementById("icMute");
-const volSlider   = document.getElementById("volSlider");
-const timeDisp    = document.getElementById("timeDisp");
-const audioBtn    = document.getElementById("audioBtn");
-const audioBtnLbl = document.getElementById("audioBtnLbl");
-const audioPanel  = document.getElementById("audioPanel");
-const audioList   = document.getElementById("audioList");
-const btnFs       = document.getElementById("btnFs");
-const icFs        = document.getElementById("icFs");
-const icExit      = document.getElementById("icExit");
-const errBox      = document.getElementById("errBox");
-const errMsg      = document.getElementById("errMsg");
-
-const AUDIO_KEY = "sp_aud_" + btoa(MPD).slice(0,14);
-
-// ── TOAST ──
-let toastT;
-function showToast(msg,dur=1800){
-  clearTimeout(toastT);toast.textContent=msg;toast.classList.add("on");
-  toastT=setTimeout(()=>toast.classList.remove("on"),dur);
-}
-
-// ── LANG MAP ──
-const LANG={en:"English",hi:"Hindi",ta:"Tamil",te:"Telugu",ml:"Malayalam",kn:"Kannada",mr:"Marathi",bn:"Bengali",gu:"Gujarati",pa:"Punjabi",ur:"Urdu",fr:"French",de:"German",es:"Spanish",it:"Italian",pt:"Portuguese",ru:"Russian",zh:"Chinese",ja:"Japanese",ko:"Korean",ar:"Arabic",tr:"Turkish",nl:"Dutch",pl:"Polish",sv:"Swedish"};
-function langName(c){if(!c||c==="und")return null;return LANG[c.split("-")[0].toLowerCase()]||c.toUpperCase()}
-
-// ── NO URL ERROR ──
-if(!MPD){
-  errMsg.textContent="No video URL provided";
-  errBox.style.display="flex";
-}
-
-// ── SHAKA INIT ──
 shaka.polyfill.installAll();
-const player = new shaka.Player();
 
-async function initPlayer(){
-  if(!MPD) return;
-  await player.attach(v);
-
-  player.configure({
-    streaming:{
-      bufferingGoal: 20,
-      rebufferingGoal: 2,
-      bufferBehind: 30,
-      maxDisabledTime: 30,
-      retryParameters:{
-        maxAttempts: 1,     // Don't retry — we handle fallback ourselves
-        baseDelay: 500,
-        backoffFactor: 2,
-        timeout: 0,
-        stallTimeout: 5000,
-        connectionTimeout: 10000,
-      },
-    },
-    manifest:{
-      retryParameters:{
-        maxAttempts: 1,
-        baseDelay: 500,
-        backoffFactor: 2,
-        timeout: 0,
-        stallTimeout: 5000,
-        connectionTimeout: 10000,
-      },
-    },
-    abr:{ enabled: true, defaultBandwidthEstimate: 1000000 },
-  });
-
-  const ne = player.getNetworkingEngine();
-
-  // ── REQUEST FILTER — route through active proxy ───────────────────────────
-  ne.registerRequestFilter((type, request) => {
-    const { proxy } = getActiveProxy();
-    const uris = request.uris;
-    for (let i = 0; i < uris.length; i++) {
-      uris[i] = buildProxyUrl(proxy, uris[i]);
-    }
-  });
-
-  // ── RESPONSE FILTER — detect failures and switch proxy ───────────────────
-  ne.registerResponseFilter((type, response) => {
-    // Non-2xx from proxy = proxy is down/overloaded → mark dead
-    if (response.status && response.status >= 500) {
-      const { idx } = getActiveProxy();
-      markProxyDead(idx);
-      showToast("Switching proxy…", 1500);
-      // Throw so Shaka retries the segment (which will hit the new proxy)
-      throw new Error("Proxy error " + response.status);
-    }
-  });
-
-  player.addEventListener("error", e => {
-    console.error(e.detail);
-    // On playback error, try switching proxy before giving up
-    const { idx } = getActiveProxy();
-    if (deadProxies.size < PROXIES.length) {
-      markProxyDead(idx);
-      showToast("Retrying with next proxy…", 2000);
-    } else {
-      ring.style.display = "none";
-      errMsg.textContent = "Playback error — all proxies failed (" + (e.detail?.code||"unknown") + ")";
-      errBox.style.display = "flex";
-    }
-  });
-
-  player.addEventListener("buffering", e => { ring.style.display = e.buffering ? "block" : "none" });
-  player.addEventListener("trackschanged", setupAudioTracks);
-  player.addEventListener("adaptation", () => {
-    const t = player.getVariantTracks().find(t => t.active);
-    if(t && t.height) showToast(t.height + "p · " + Math.round(t.bandwidth/1000) + "kbps", 1400);
-  });
-
-  try {
-    ring.style.display = "block";
-    await player.load(MPD);
-    ring.style.display = "none";
-    v.play().catch(()=>{});
-    setupAudioTracks();
-    checkNetwork();
-  } catch(e) {
-    console.error(e);
-    ring.style.display = "none";
-    errMsg.textContent = "Failed to load stream";
-    errBox.style.display = "flex";
+function toggleDropdown(openId, closeId) {
+  document.getElementById(closeId).classList.remove('open');
+  document.getElementById(openId).classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.track-panel-overlay')) {
+    document.getElementById('video-dd').classList.remove('open');
+    document.getElementById('audio-dd').classList.remove('open');
   }
+});
+
+async function initPlayer() {
+  if (player) { await player.destroy(); player = null; }
+  player = new shaka.Player(video);
+  player.configure({
+    streaming: {
+      bufferingGoal: 60, rebufferingGoal: 5,
+      retryParameters: { maxAttempts: 10, baseDelay: 1000, backoffFactor: 1.3, timeout: 40000 },
+    },
+  });
+  player.addEventListener('adaptation', () => { if (abrActive) {} });
 }
-initPlayer();
 
-// ── TIME ──
-function fmtTime(s){
-  s=Math.floor(s||0);
-  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
-  return h>0?h+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"):m+":"+String(sec).padStart(2,"0");
+async function loadVideo(url) {
+  await initPlayer();
+  try {
+    await player.load(url);
+    video.play();
+    renderQualityTracks();
+    renderAudioTracks();
+  } catch (e) { console.error(e); }
 }
 
-// ── PROGRESS ──
-function updateProgress(){
-  if(!v.duration)return;
-  const pct=v.currentTime/v.duration*100;
-  progFill.style.width=pct+"%";
-  progThumb.style.left=pct+"%";
-  let bufEnd=0;
-  for(let i=0;i<v.buffered.length;i++) if(v.buffered.start(i)<=v.currentTime) bufEnd=Math.max(bufEnd,v.buffered.end(i));
-  progBuf.style.width=(bufEnd/v.duration*100)+"%";
-  timeDisp.textContent=fmtTime(v.currentTime)+" / "+fmtTime(v.duration);
+function formatBitrate(bps) {
+  if (!bps) return '';
+  return bps >= 1000000 ? (bps/1000000).toFixed(1)+'M' : Math.round(bps/1000)+'k';
 }
-setInterval(updateProgress,300);
-
-let seeking=false;
-function seekTo(e){
-  const r=progWrap.getBoundingClientRect();
-  v.currentTime=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*v.duration;
+function qualityLabel(t) {
+  return t.height ? t.height+'p' : t.width ? t.width+'w' : 'Track '+t.id;
 }
-progWrap.addEventListener("mousedown",e=>{seeking=true;seekTo(e)});
-progWrap.addEventListener("touchstart",e=>{seeking=true;seekTo(e.touches[0])},{passive:true});
-document.addEventListener("mousemove",e=>{if(seeking)seekTo(e)});
-document.addEventListener("mouseup",()=>seeking=false);
-document.addEventListener("touchend",()=>seeking=false);
 
-// ── PLAY / PAUSE ──
-function syncPlay(){icPlay.style.display=v.paused?"block":"none";icPause.style.display=v.paused?"none":"block"}
-btnPlay.addEventListener("click",()=>{v.paused?v.play():v.pause()});
-v.addEventListener("click",()=>{v.paused?v.play():v.pause()});
-v.addEventListener("play",syncPlay);v.addEventListener("pause",syncPlay);
+function renderQualityTracks() {
+  const container = document.getElementById('quality-list');
+  container.innerHTML = '';
+  abrActive = true;
+  const tracks = player.getVariantTracks();
+  const seen = new Map();
+  for (const t of tracks) {
+    const key = t.height || t.width || t.id;
+    if (!seen.has(key) || t.bandwidth > seen.get(key).bandwidth) seen.set(key, t);
+  }
+  const unique = [...seen.values()].sort((a,b) => (b.height||0)-(a.height||0));
+  if (!unique.length) { container.innerHTML = '<span style="color:var(--muted);font-size:12px;padding:4px 8px">No tracks</span>'; return; }
 
-// ── VOLUME ──
-volSlider.addEventListener("input",()=>{v.volume=+volSlider.value;v.muted=v.volume===0;syncMute()});
-btnMute.addEventListener("click",()=>{v.muted=!v.muted;if(!v.muted&&v.volume===0)v.volume=0.5;volSlider.value=v.muted?0:v.volume;syncMute()});
-function syncMute(){icVol.style.display=(v.muted||v.volume===0)?"none":"block";icMute.style.display=(v.muted||v.volume===0)?"block":"none"}
+  document.getElementById('video-dot').style.display = 'inline-block';
 
-// ── FULLSCREEN ──
-btnFs.addEventListener("click",()=>{document.fullscreenElement?document.exitFullscreen():wrap.requestFullscreen().catch(()=>{})});
-document.addEventListener("fullscreenchange",()=>{const f=!!document.fullscreenElement;icFs.style.display=f?"none":"block";icExit.style.display=f?"block":"none"});
+  const autoBtn = document.createElement('button');
+  autoBtn.className = 'tp-item active';
+  autoBtn.innerHTML = `Auto <span class="tp-badge" style="background:rgba(74,222,128,0.2);color:#4ade80">ABR</span>`;
+  autoBtn.onclick = () => {
+    abrActive = true;
+    player.configure({ abr: { enabled: true } });
+    container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
+    autoBtn.classList.add('active');
+  };
+  container.appendChild(autoBtn);
 
-// ── CURSOR / HIDE CONTROLS ──
-let hideT;
-function showControls(){wrap.classList.add("show-cursor");clearTimeout(hideT);hideT=setTimeout(()=>{if(!v.paused)wrap.classList.remove("show-cursor")},3000)}
-wrap.addEventListener("mousemove",showControls);
-wrap.addEventListener("touchstart",showControls,{passive:true});
-v.addEventListener("pause",()=>wrap.classList.add("show-cursor"));
-v.addEventListener("play",showControls);
-
-// ── AUDIO TRACKS ──
-function setupAudioTracks(){
-  const variants=player.getVariantTracks();
-  const langs=[...new Set(variants.map(t=>t.language).filter(Boolean))];
-  audioList.innerHTML="";
-  if(langs.length<=1){audioBtn.style.display="none";return}
-  audioBtn.style.display="flex";
-  const savedLang=localStorage.getItem(AUDIO_KEY)||langs[0];
-  langs.forEach(lang=>{
-    const name=langName(lang)||lang.toUpperCase();
-    const active=lang===savedLang;
-    const btn=document.createElement("button");
-    btn.className="panel-item"+(active?" active":"");
-    btn.innerHTML=`<span class="dot"></span>${name}`;
-    btn.addEventListener("click",()=>{
-      player.selectAudioLanguage(lang);
-      localStorage.setItem(AUDIO_KEY,lang);
-      document.querySelectorAll(".panel-item").forEach((b,j)=>b.classList.toggle("active",langs[j]===lang));
-      audioBtnLbl.textContent=name;showToast(name);closePanel();
-    });
-    audioList.appendChild(btn);
-    if(active){audioBtnLbl.textContent=name;if(lang!==langs[0])player.selectAudioLanguage(lang)}
+  unique.forEach(track => {
+    const btn = document.createElement('button');
+    const qlbl = qualityLabel(track);
+    const blbl = formatBitrate(track.bandwidth);
+    btn.className = 'tp-item';
+    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}`;
+    btn.onclick = () => {
+      abrActive = false;
+      player.configure({ abr: { enabled: false } });
+      const match = player.getVariantTracks().find(t => (t.height||t.width||t.id)===(track.height||track.width||track.id));
+      if (match) player.selectVariantTrack(match, true);
+      container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+    container.appendChild(btn);
   });
 }
 
-// ── PANEL ──
-let panelOpen=false;
-function openPanel(){panelOpen=true;audioPanel.classList.add("open")}
-function closePanel(){panelOpen=false;audioPanel.classList.remove("open")}
-audioBtn.addEventListener("click",e=>{e.stopPropagation();panelOpen?closePanel():openPanel()});
-document.addEventListener("click",()=>closePanel());
-audioPanel.addEventListener("click",e=>e.stopPropagation());
-
-// ── NETWORK CHECK ──
-async function checkNetwork(){
-  if(!MPD)return;
-  try{
-    const t0=performance.now();
-    const r=await fetch(MPD+"?nc="+Date.now(),{cache:"no-store",signal:AbortSignal.timeout(7000)});
-    const buf=await r.arrayBuffer();
-    const mbps=((buf.byteLength*8)/((performance.now()-t0)/1000))/1e6;
-    const m=Math.round(mbps*10)/10;
-    netBadge.style.opacity="1";
-    netLbl.textContent=m.toFixed(1)+" Mbps";
-    ndot.className="ndot "+(m>=5?"g":m>=1.5?"y":"r");
-    setTimeout(()=>netBadge.style.opacity="0",5000);
-    player.configure("streaming.bufferingGoal",m>=5?10:m>=2?20:35);
-  }catch(e){}
+const LANG_NAMES = { hin:'Hindi', tel:'Telugu', eng:'English', tam:'Tamil', kan:'Kannada', mal:'Malayalam', mar:'Marathi', ben:'Bengali', und:'Default' };
+function langLabel(lang, title) {
+  if (title && title !== lang) return title;
+  return LANG_NAMES[lang?.toLowerCase()] || lang?.toUpperCase() || 'Track';
 }
-setTimeout(checkNetwork,1200);
-setInterval(checkNetwork,60000);
+
+function renderAudioTracks() {
+  const container = document.getElementById('audio-list');
+  container.innerHTML = '';
+  const tracks = player.getVariantTracks();
+  const seen = new Set(); const langs = [];
+  for (const t of tracks) {
+    const key = t.language || 'und';
+    if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label||'' }); }
+  }
+  if (!langs.length) { container.innerHTML = '<span style="color:var(--muted);font-size:12px;padding:4px 8px">No tracks</span>'; return; }
+  document.getElementById('audio-dot').style.display = 'inline-block';
+
+  const active = tracks.find(t => t.active);
+  const activeLang = active?.language || langs[0].language;
+
+  langs.forEach(({ language, label }) => {
+    const btn = document.createElement('button');
+    btn.className = 'tp-item' + (language === activeLang ? ' active' : '');
+    btn.textContent = langLabel(language, label);
+    btn.onclick = () => {
+      document.querySelectorAll('#audio-list .tp-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      player.selectAudioLanguage(language);
+    };
+    container.appendChild(btn);
+  });
+}
+
+// Load from ?url= query param only
+const params = new URLSearchParams(window.location.search);
+const autoUrl = params.get('url');
+if (autoUrl) loadVideo(autoUrl);
 </script>
 </body>
 </html>
