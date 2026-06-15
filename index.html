@@ -213,11 +213,6 @@ async function initPlayer() {
     },
   });
 
-  // Send correct Origin & Referer so the worker allows the request
-  player.getNetworkingEngine().registerRequestFilter((type, request) => {
-    request.headers['Origin']  = 'https://mytoontopia.com';
-    request.headers['Referer'] = 'https://mytoontopia.com/';
-  });
 
   player.addEventListener('buffering', (e) => {
     if (e.buffering) log('Buffering…', 'warn');
