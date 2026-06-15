@@ -113,7 +113,6 @@ async function loadVideo(url) {
   await initPlayer();
   try {
     await player.load(url);
-    video.play();
     renderQualityTracks();
     renderAudioTracks();
   } catch (e) { console.error(e); }
