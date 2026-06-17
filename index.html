@@ -159,10 +159,7 @@ const bufBar       = document.getElementById('buf-bar');
 const bufLabel     = document.getElementById('buf-label');
 const playOverlay  = document.getElementById('play-overlay');
 
-let player = null, abrActive = true;
-let previewReady = false;
-const PREVIEW_SEC = 10;   // seconds to silently buffer before showing play button
-
+playOverlay.classList.add('visible');
 shaka.polyfill.installAll();
 
 function toggleDropdown(openId, closeId) {
@@ -219,8 +216,19 @@ function showPlayOverlay() {
 
 // User clicks the big play button → unpause + show native controls
 playOverlay.addEventListener('click', () => {
+
   playOverlay.classList.remove('visible');
+
+  bufOverlay.classList.remove('hidden');
+
+  bufBar.style.width = '0%';
+
+  bufLabel.textContent = 'Buffering...';
+
   video.controls = true;
+
+  requestAnimationFrame(tickPreviewProgress);
+
   video.play().catch(() => {});
 });
 
@@ -228,31 +236,27 @@ playOverlay.addEventListener('click', () => {
 
 async function loadVideo(url) {
   previewReady = false;
-  bufOverlay.classList.remove('hidden');
-  bufBar.style.width = '0%';
-  bufLabel.textContent = 'Buffering preview…';
-  playOverlay.classList.remove('visible');
+
+  bufOverlay.classList.add('hidden');   // hide buffer screen
+  playOverlay.classList.add('visible'); // show play button immediately
+
   video.controls = false;
 
   await initPlayer();
+
   try {
     await player.load(url);
 
-    // Pause immediately after load so we only buffer, don't play
-    video.pause();
-
-    // Start silent buffering; browser will fill the buffer even while paused
-    requestAnimationFrame(tickPreviewProgress);
-
-    // Fallback: if bufferedEnd doesn't reach 10 s within 20 s, show play anyway
-    setTimeout(() => { if (!previewReady) showPlayOverlay(); }, 20000);
+    // Load track lists
+    renderQualityTracks();
+    renderAudioTracks();
 
   } catch (e) {
     console.error(e);
+    bufOverlay.classList.remove('hidden');
     bufLabel.textContent = 'Failed to load stream.';
   }
 }
-
 /* ---------- quality / audio tracks ---------- */
 
 function formatBitrate(bps) {
@@ -307,7 +311,7 @@ function renderQualityTracks() {
   });
 }
 
-const LANG_NAMES = { hin:'Hindi', tel:'Telugu', eng:'English', tam:'Tamil', kan:'Kannada', mal:'Malayalam', mar:'Marathi', ben:'Bengali', und:'Default' };
+const LANG_NAMES = { hi:'Hindi', te:'Telugu', en:'English', ta:'Tamil', ka:'Kannada', ma:'Malayalam', mar:'Marathi', be:'Bengali', un:'Default' };
 function langLabel(lang, title) {
   if (title && title !== lang) return title;
   return LANG_NAMES[lang?.toLowerCase()] || lang?.toUpperCase() || 'Track';
