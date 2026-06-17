@@ -58,7 +58,7 @@
   }
   .buf-bar {
     height: 100%; width: 0%; background: #6c63ff;
-    border-radius: 4px; transition: width 0.2s ease;
+    border-radius: 4px; transition: width 0.3s ease;
   }
 
   #err-overlay {
@@ -127,7 +127,7 @@
 </head>
 <body>
 <div class="video-wrap">
-  <video id="video" playsinline preload="metadata"></video>
+  <video id="video" playsinline preload="auto"></video>
 
   <div id="play-overlay">
     <div class="play-btn-circle"><div class="play-icon"></div></div>
@@ -135,7 +135,7 @@
 
   <div id="buf-overlay">
     <div class="buf-spinner"></div>
-    <div class="buf-label" id="buf-label">Buffering… 0%</div>
+    <div class="buf-label" id="buf-label">Loading… 0%</div>
     <div class="buf-bar-wrap"><div class="buf-bar" id="buf-bar"></div></div>
   </div>
 
@@ -174,8 +174,9 @@ const bufLabel    = document.getElementById('buf-label');
 const errOverlay  = document.getElementById('err-overlay');
 const errMsg      = document.getElementById('err-msg');
 
-const BUFFER_TARGET = 6;
-let player = null, abrActive = true, currentUrl = null;
+// Only 10 seconds needed before auto-play starts
+const BUFFER_TARGET = 10;
+let player = null, currentUrl = null, bufferCheckRaf = null;
 
 shaka.polyfill.installAll();
 
@@ -190,21 +191,17 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// FIX 1: Detect highest real bandwidth from MPD tracks and cap ABR below it
-// This prevents Shaka from attempting inflated bandwidth tracks (e.g. 7.8 Mbps
-// declared for a 720p stream in Chhota Bheem) that cause ABR thrashing.
+// Detect inflated bandwidth tracks and return a safe cap
 function getSafeMaxBandwidth(tracks) {
   const bws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
   if (bws.length <= 1) return Infinity;
-  // If the highest declared bandwidth is more than 3x the second highest,
-  // it's almost certainly a bad/inflated value — exclude it
   const secondHighest = bws[bws.length - 2];
   const highest = bws[bws.length - 1];
   if (highest > secondHighest * 3) {
-    console.warn(`Capping ABR: highest bandwidth ${highest} bps looks inflated vs ${secondHighest} bps. Excluding it.`);
-    return secondHighest; // cap below the inflated track
+    console.warn(`Inflated bandwidth detected: ${highest} bps vs ${secondHighest} bps. Capping ABR.`);
+    return secondHighest;
   }
-  return Infinity; // all bandwidths look reasonable, no cap needed
+  return Infinity;
 }
 
 async function initPlayer() {
@@ -213,34 +210,32 @@ async function initPlayer() {
 
   player.configure({
     streaming: {
-      bufferingGoal: 60,
-      rebufferingGoal: 2,
-      // FIX 2: Don't do play→pause to pre-buffer. Instead let Shaka buffer
-      // silently before the video element starts. This avoids the NS_BINDING_ABORTED
-      // cascade that happened when init segments were re-fetched after pause.
-      startAtSegmentBoundary: true,
+      bufferingGoal: 30,        // keep 30s ahead once playing
+      rebufferingGoal: 3,       // resume after 3s buffered (was 2)
       retryParameters: {
-        maxAttempts: 10,
+        maxAttempts: 6,
         baseDelay: 500,
         backoffFactor: 1.5,
-        timeout: 30000,
+        timeout: 20000,
       },
+      // Don't switch quality mid-segment — wait for clean segment boundary
+      stallEnabled: true,
+      stallThreshold: 1,
+      stallSkip: 0.1,
     },
     abr: {
-      enabled: true,
-      // FIX 3: Start at a conservative estimate so Shaka doesn't immediately
-      // jump to the highest (possibly inflated) quality track
-      defaultBandwidthEstimate: 800000,
-      // Give ABR time to stabilise before switching up aggressively
-      bandwidthUpgradeTarget: 0.85,
+      enabled: false,           // START with ABR OFF — lock to lowest quality
+                                // for the first 10s buffer, then enable after play starts
+      defaultBandwidthEstimate: 300000, // very conservative start: 300kbps
+      bandwidthUpgradeTarget: 0.9,
       bandwidthDowngradeTarget: 0.95,
+      restrictions: {
+        maxBandwidth: 700000,   // never exceed 700kbps until we manually lift this
+      },
     },
     manifest: {
       dash: {
-        // FIX 4: Helps with isoff-main profile — Shaka won't reject the manifest
-        // for having a minBufferTime it doesn't like
         ignoreMinBufferTime: true,
-        // FIX 5: Ignore suggested presentation delay so playback starts immediately
         ignoreSuggestedPresentationDelay: true,
       }
     }
@@ -248,77 +243,88 @@ async function initPlayer() {
 
   player.addEventListener('error', (e) => {
     console.error('Shaka error', e.detail);
+    cancelAnimationFrame(bufferCheckRaf);
     bufOverlay.classList.remove('visible');
-    errMsg.textContent = `Playback error (code ${e.detail?.code ?? '?'}). Check console for details.`;
+    errMsg.textContent = `Playback error (code ${e.detail?.code ?? '?'}).`;
     errOverlay.classList.add('visible');
   });
 }
 
-// FIX 6: Correctly reads buffered seconds from the first buffer range
 function getBuffered() {
   const buf = video.buffered;
   if (buf.length > 0) return buf.end(0);
   return 0;
 }
 
-function waitForBuffer() {
-  return new Promise(resolve => {
-    function check() {
-      const buffered = getBuffered();
-      const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
-      bufBar.style.width = pct + '%';
-      bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
-      if (buffered >= BUFFER_TARGET) resolve();
-      else requestAnimationFrame(check);
+// Poll buffer and auto-play when BUFFER_TARGET seconds are ready
+function startBufferWatch() {
+  function check() {
+    const buffered = getBuffered();
+    const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
+    bufBar.style.width = pct + '%';
+    bufLabel.textContent = `Loading… ${Math.round(pct)}%`;
+
+    if (buffered >= BUFFER_TARGET) {
+      // Enough buffered — hide overlay and play automatically
+      bufOverlay.classList.remove('visible');
+      video.controls = true;
+
+      // NOW enable ABR and lift the bandwidth cap so quality can ramp up naturally
+      const tracks = player.getVariantTracks();
+      const safeBw = getSafeMaxBandwidth(tracks);
+      player.configure({
+        abr: {
+          enabled: true,
+          restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
+        }
+      });
+
+      video.play().catch(() => {});
+    } else {
+      bufferCheckRaf = requestAnimationFrame(check);
     }
-    check();
-  });
+  }
+  bufferCheckRaf = requestAnimationFrame(check);
 }
 
-// FIX 7: Removed the play→pause pre-buffer trick entirely.
-// Instead we wait for Shaka's own buffering event before starting.
-// This avoids flushing the buffer with currentTime=0 and avoids
-// triggering NS_BINDING_ABORTED on inflight segment requests.
+// Click play → show buffer overlay → lock to lowest quality → buffer 10s → auto-play
 playOverlay.addEventListener('click', async () => {
   playOverlay.classList.add('hidden');
   bufOverlay.classList.add('visible');
+  bufBar.style.width = '0%';
+  bufLabel.textContent = 'Loading… 0%';
 
-  await waitForBuffer();
+  // Lock to the absolute lowest quality track for fast initial buffering
+  // This stops Shaka fetching chunk-0, chunk-1, chunk-2 simultaneously
+  const tracks = player.getVariantTracks();
+  if (tracks.length) {
+    const lowest = tracks.reduce((a, b) => a.bandwidth < b.bandwidth ? a : b);
+    player.selectVariantTrack(lowest, /* clearBuffer */ false);
+  }
 
-  bufOverlay.classList.remove('visible');
-  video.controls = true;
-  video.play().catch(() => {});
+  // Start Shaka buffering (no play/pause trick — just let it prefetch)
+  startBufferWatch();
 });
 
 async function loadVideo(url) {
   currentUrl = url;
+  cancelAnimationFrame(bufferCheckRaf);
   errOverlay.classList.remove('visible');
+  bufOverlay.classList.remove('visible');
   video.controls = false;
   playOverlay.classList.remove('hidden');
   bufBar.style.width = '0%';
-  bufLabel.textContent = 'Buffering… 0%';
 
   await initPlayer();
 
   try {
     await player.load(url);
-
-    // FIX 8: After load, detect and cap inflated bandwidth tracks
-    const tracks = player.getVariantTracks();
-    const safeBw = getSafeMaxBandwidth(tracks);
-    if (safeBw !== Infinity) {
-      player.configure({ abr: { restrictions: { maxBandwidth: safeBw } } });
-    }
-
-    renderQualityTracks(safeBw);
+    renderQualityTracks();
     renderAudioTracks();
-
-    // FIX 9: Start buffering silently (no play/pause trick)
-    // Shaka buffers ahead automatically after load; we just poll getBuffered()
   } catch (e) {
     console.error('Load error', e);
     playOverlay.classList.add('hidden');
-    errMsg.textContent = `Failed to load stream (code ${e.code ?? '?'}). The URL may be invalid or expired.`;
+    errMsg.textContent = `Failed to load stream (code ${e.code ?? '?'}). URL may be invalid or expired.`;
     errOverlay.classList.add('visible');
   }
 }
@@ -338,10 +344,9 @@ function qualityLabel(t) {
   return t.height ? t.height + 'p' : t.width ? t.width + 'w' : 'Track ' + t.id;
 }
 
-function renderQualityTracks(safeBw) {
+function renderQualityTracks() {
   const container = document.getElementById('quality-list');
   container.innerHTML = '';
-  abrActive = true;
   const tracks = player.getVariantTracks();
   const seen = new Map();
   for (const t of tracks) {
@@ -359,27 +364,32 @@ function renderQualityTracks(safeBw) {
   autoBtn.className = 'tp-item active';
   autoBtn.innerHTML = `Auto <span class="tp-badge" style="background:rgba(74,222,128,0.2);color:#4ade80">ABR</span>`;
   autoBtn.onclick = () => {
-    abrActive = true;
-    player.configure({ abr: { enabled: true } });
+    const safeBw = getSafeMaxBandwidth(player.getVariantTracks());
+    player.configure({
+      abr: {
+        enabled: true,
+        restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
+      }
+    });
     container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
     autoBtn.classList.add('active');
   };
   container.appendChild(autoBtn);
 
+  const allBws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a,b) => a - b);
+  const secondHighest = allBws[allBws.length - 2];
+  const highest = allBws[allBws.length - 1];
+  const isInflatedPresent = highest > secondHighest * 3;
+
   unique.forEach(track => {
-    const isInflated = safeBw !== Infinity && track.bandwidth > safeBw;
+    const isInflated = isInflatedPresent && track.bandwidth === highest;
     const btn = document.createElement('button');
     const qlbl = qualityLabel(track);
     const blbl = formatBitrate(track.bandwidth);
     btn.className = 'tp-item';
-    // Mark inflated tracks visually so user knows
-    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24">!</span>` : ''}`;
-    btn.title = isInflated ? 'Bandwidth may be inflated in this stream — may stall' : '';
+    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24" title="May stall">⚠</span>` : ''}`;
     btn.onclick = () => {
-      abrActive = false;
-      player.configure({ abr: { enabled: false }, streaming: { } });
-      // Remove maxBandwidth restriction so user can manually select any track
-      player.configure({ abr: { restrictions: { maxBandwidth: Infinity } } });
+      player.configure({ abr: { enabled: false, restrictions: { maxBandwidth: Infinity } } });
       const match = player.getVariantTracks().find(t =>
         (t.height || t.width || t.id) === (track.height || track.width || track.id)
       );
