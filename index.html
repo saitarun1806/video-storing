@@ -12,7 +12,7 @@
   .video-wrap { width: 100%; height: 100%; position: relative; }
   video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
 
-  /* Play button overlay shown immediately on load */
+  /* Play button overlay */
   #play-overlay {
     position: absolute; inset: 0; z-index: 25;
     display: flex; align-items: center; justify-content: center;
@@ -26,28 +26,56 @@
     transition: transform 0.15s, background 0.15s;
     box-shadow: 0 0 0 12px rgba(108,99,255,0.18);
   }
-  #play-overlay:hover .play-btn-circle {
-    background: #6c63ff; transform: scale(1.08);
-  }
+  #play-overlay:hover .play-btn-circle { background: #6c63ff; transform: scale(1.08); }
   .play-icon {
-    width: 0; height: 0;
-    border-style: solid;
+    width: 0; height: 0; border-style: solid;
     border-width: 14px 0 14px 26px;
     border-color: transparent transparent transparent #fff;
     margin-left: 6px;
   }
 
+  /* Buffering overlay — shown after click while loading 6s */
+  #buf-overlay {
+    position: absolute; inset: 0; z-index: 30;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.85); gap: 16px;
+  }
+  #buf-overlay.visible { display: flex; }
+
+  .buf-spinner {
+    width: 46px; height: 46px;
+    border: 3px solid rgba(108,99,255,0.2);
+    border-top-color: #6c63ff;
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .buf-label {
+    color: #e8e8f0; font-size: 13px; font-weight: 500;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: 0.3px;
+  }
+  .buf-bar-wrap {
+    width: 180px; height: 4px; background: rgba(255,255,255,0.1);
+    border-radius: 4px; overflow: hidden;
+  }
+  .buf-bar {
+    height: 100%; width: 0%; background: #6c63ff;
+    border-radius: 4px; transition: width 0.2s ease;
+  }
+
+  /* Track panel */
   .track-panel-overlay {
     position: absolute; top: 10px; right: 10px; z-index: 20;
     display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
   }
   .track-toggle-row { display: flex; gap: 6px; }
   .tp-toggle-btn {
-    background: rgba(10,10,15,0.82);
-    border: 1px solid rgba(108,99,255,0.5);
-    color: #e8e8f0; border-radius: 7px;
-    font-size: 11px; font-weight: 600; padding: 5px 10px;
-    cursor: pointer; backdrop-filter: blur(6px);
+    background: rgba(10,10,15,0.82); border: 1px solid rgba(108,99,255,0.5);
+    color: #e8e8f0; border-radius: 7px; font-size: 11px; font-weight: 600;
+    padding: 5px 10px; cursor: pointer; backdrop-filter: blur(6px);
     transition: background 0.15s, border-color 0.15s;
     display: flex; align-items: center; gap: 5px;
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -85,11 +113,18 @@
 </head>
 <body>
 <div class="video-wrap">
-  <video id="video" playsinline></video>
+  <video id="video" playsinline preload="metadata"></video>
 
-  <!-- shown immediately on load, disappears on click -->
+  <!-- Shown immediately on load -->
   <div id="play-overlay">
     <div class="play-btn-circle"><div class="play-icon"></div></div>
+  </div>
+
+  <!-- Shown after click, while buffering 6s -->
+  <div id="buf-overlay">
+    <div class="buf-spinner"></div>
+    <div class="buf-label" id="buf-label">Buffering… 0%</div>
+    <div class="buf-bar-wrap"><div class="buf-bar" id="buf-bar"></div></div>
   </div>
 
   <div class="track-panel-overlay">
@@ -113,9 +148,13 @@
 </div>
 
 <script>
-const video       = document.getElementById('video');
+const video      = document.getElementById('video');
 const playOverlay = document.getElementById('play-overlay');
+const bufOverlay  = document.getElementById('buf-overlay');
+const bufBar      = document.getElementById('buf-bar');
+const bufLabel    = document.getElementById('buf-label');
 
+const BUFFER_TARGET = 6; // seconds to buffer before playback starts
 let player = null, abrActive = true;
 shaka.polyfill.installAll();
 
@@ -136,22 +175,62 @@ async function initPlayer() {
   player.configure({
     streaming: {
       bufferingGoal: 60,
-      rebufferingGoal: 5,
+      rebufferingGoal: 2,
       retryParameters: { maxAttempts: 10, baseDelay: 1000, backoffFactor: 1.3, timeout: 40000 },
     },
   });
 }
 
-// User clicks the play button → hide it, show native controls, play
-playOverlay.addEventListener('click', () => {
+// Returns how many seconds are buffered from position 0
+function getBuffered() {
+  const buf = video.buffered;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf.start(i) <= 0.5) return buf.end(i);
+  }
+  return 0;
+}
+
+// Wait until BUFFER_TARGET seconds are buffered, updating the progress bar
+function waitForBuffer() {
+  return new Promise(resolve => {
+    function check() {
+      const buffered = getBuffered();
+      const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
+      bufBar.style.width = pct + '%';
+      bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
+      if (buffered >= BUFFER_TARGET) {
+        resolve();
+      } else {
+        requestAnimationFrame(check);
+      }
+    }
+    check();
+  });
+}
+
+// Click play → show buffer screen → wait 6s buffered → play normally
+playOverlay.addEventListener('click', async () => {
   playOverlay.classList.add('hidden');
+  bufOverlay.classList.add('visible');
+
+  // Start silent playback so browser fetches data, then immediately pause
+  video.controls = false;
+  try { await video.play(); } catch(_) {}
+  video.pause();
+
+  // Wait until 6 seconds are buffered
+  await waitForBuffer();
+
+  // Hide buffer screen, show controls, resume
+  bufOverlay.classList.remove('visible');
   video.controls = true;
+  video.currentTime = 0; // start from beginning
   video.play().catch(() => {});
 });
 
 async function loadVideo(url) {
   video.controls = false;
-  playOverlay.classList.remove('hidden'); // show play button right away
+  playOverlay.classList.remove('hidden');
 
   await initPlayer();
 
@@ -186,8 +265,10 @@ function renderQualityTracks() {
     if (!seen.has(key) || t.bandwidth > seen.get(key).bandwidth) seen.set(key, t);
   }
   const unique = [...seen.values()].sort((a,b) => (b.height||0)-(a.height||0));
-  if (!unique.length) { container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>'; return; }
-
+  if (!unique.length) {
+    container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
+    return;
+  }
   document.getElementById('video-dot').style.display = 'inline-block';
 
   const autoBtn = document.createElement('button');
@@ -210,7 +291,9 @@ function renderQualityTracks() {
     btn.onclick = () => {
       abrActive = false;
       player.configure({ abr: { enabled: false } });
-      const match = player.getVariantTracks().find(t => (t.height||t.width||t.id)===(track.height||track.width||track.id));
+      const match = player.getVariantTracks().find(t =>
+        (t.height||t.width||t.id) === (track.height||track.width||track.id)
+      );
       if (match) player.selectVariantTrack(match, true);
       container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
@@ -219,7 +302,10 @@ function renderQualityTracks() {
   });
 }
 
-const LANG_NAMES = { hi:'Hindi', te:'Telugu', en:'English', ta:'Tamil', ka:'Kannada', ma:'Malayalam', mar:'Marathi', be:'Bengali', un:'Default' };
+const LANG_NAMES = {
+  hi:'Hindi', te:'Telugu', en:'English', ta:'Tamil',
+  ka:'Kannada', ma:'Malayalam', mar:'Marathi', be:'Bengali', un:'Default'
+};
 function langLabel(lang, title) {
   if (title && title !== lang) return title;
   return LANG_NAMES[lang?.toLowerCase()] || lang?.toUpperCase() || 'Track';
@@ -234,7 +320,10 @@ function renderAudioTracks() {
     const key = t.language || 'und';
     if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label||'' }); }
   }
-  if (!langs.length) { container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>'; return; }
+  if (!langs.length) {
+    container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
+    return;
+  }
   document.getElementById('audio-dot').style.display = 'inline-block';
 
   const active = tracks.find(t => t.active);
