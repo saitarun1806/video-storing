@@ -210,18 +210,25 @@ async function initPlayer() {
 
   player.configure({
     streaming: {
-      bufferingGoal: 10,        // keep 30s ahead once playing
-      rebufferingGoal: 3,       // resume after 3s buffered (was 2)
+      // bufferingGoal matched to BUFFER_TARGET (10s) to avoid the race where
+      // Shaka thinks it's "done" prefetching before the UI's poll loop sees it.
+      bufferingGoal: 10,
+      rebufferingGoal: 3,       // resume after 3s buffered
       retryParameters: {
-        maxAttempts: 6,
-        baseDelay: 500,
+        maxAttempts: 2,          // fail fast on a single bad/missing segment
+        baseDelay: 300,
         backoffFactor: 1.5,
-        timeout: 20000,
+        timeout: 8000,
       },
-      // Don't switch quality mid-segment — wait for clean segment boundary
+      // Stall handling: if playback stalls (e.g. a segment is unavailable),
+      // skip forward instead of freezing indefinitely.
       stallEnabled: true,
-      stallThreshold: 1,
-      stallSkip: 0.1,
+      stallThreshold: 1,        // wait 1s of no progress before acting
+      stallSkip: 0.5,           // jump far enough to actually clear a missing chunk
+      // Don't let one missing segment poison the whole buffered range —
+      // let Shaka route around gaps where possible.
+      jumpLargeGaps: true,
+      smallGapLimit: 1.5,
     },
     abr: {
       enabled: false,           // START with ABR OFF — lock to lowest quality
@@ -242,18 +249,40 @@ async function initPlayer() {
   });
 
   player.addEventListener('error', (e) => {
-    console.error('Shaka error', e.detail);
+    const detail = e.detail;
+
+    // Segment-level / network errors for a single chunk shouldn't be fatal —
+    // log it, skip it, and let stallSkip / jumpLargeGaps carry playback forward.
+    const isSegmentLevelNetworkError =
+      detail?.category === shaka.util.Error.Category.NETWORK;
+
+    if (isSegmentLevelNetworkError) {
+      console.warn('Segment unavailable, skipping:', detail);
+      return; // swallow — do not show the fatal error overlay
+    }
+
+    // Anything else (manifest parse failure, DRM, fatal media errors) is
+    // treated as fatal as before.
+    console.error('Shaka error', detail);
     cancelAnimationFrame(bufferCheckRaf);
     bufOverlay.classList.remove('visible');
-    errMsg.textContent = `Playback error (code ${e.detail?.code ?? '?'}).`;
+    errMsg.textContent = `Playback error (code ${detail?.code ?? '?'}).`;
     errOverlay.classList.add('visible');
   });
 }
 
 function getBuffered() {
   const buf = video.buffered;
-  if (buf.length > 0) return buf.end(0);
-  return 0;
+  if (!buf.length) return 0;
+  // Use the buffered range that actually contains (or is closest ahead of)
+  // the current playhead, not just range 0 — avoids under-reporting when
+  // a gap exists earlier in the buffer.
+  const t = video.currentTime;
+  for (let i = 0; i < buf.length; i++) {
+    if (t >= buf.start(i) && t <= buf.end(i)) return buf.end(i);
+  }
+  // fallback: furthest end across all ranges
+  return buf.end(buf.length - 1);
 }
 
 // Poll buffer and auto-play when BUFFER_TARGET seconds are ready
@@ -279,7 +308,9 @@ function startBufferWatch() {
         }
       });
 
-      video.play().catch(() => {});
+      video.play().catch(err => {
+        console.error('play() rejected:', err?.name, err?.message);
+      });
     } else {
       bufferCheckRaf = requestAnimationFrame(check);
     }
