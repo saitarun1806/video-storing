@@ -34,7 +34,7 @@
     margin-left: 6px;
   }
 
-  /* Buffering overlay — shown after click while loading 6s */
+  /* Buffering overlay */
   #buf-overlay {
     position: absolute; inset: 0; z-index: 30;
     display: none; flex-direction: column;
@@ -65,6 +65,27 @@
     height: 100%; width: 0%; background: #6c63ff;
     border-radius: 4px; transition: width 0.2s ease;
   }
+
+  /* Error overlay */
+  #err-overlay {
+    position: absolute; inset: 0; z-index: 35;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.9); gap: 12px;
+  }
+  #err-overlay.visible { display: flex; }
+  .err-icon { font-size: 40px; }
+  .err-msg {
+    color: #f87171; font-size: 13px; font-weight: 500;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    text-align: center; max-width: 260px; line-height: 1.5;
+  }
+  .err-retry {
+    background: #6c63ff; color: #fff; border: none;
+    border-radius: 7px; padding: 8px 20px; font-size: 13px;
+    font-weight: 600; cursor: pointer; font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  .err-retry:hover { background: #5a52d5; }
 
   /* Track panel */
   .track-panel-overlay {
@@ -120,11 +141,18 @@
     <div class="play-btn-circle"><div class="play-icon"></div></div>
   </div>
 
-  <!-- Shown after click, while buffering 6s -->
+  <!-- Shown after click while buffering -->
   <div id="buf-overlay">
     <div class="buf-spinner"></div>
     <div class="buf-label" id="buf-label">Buffering… 0%</div>
     <div class="buf-bar-wrap"><div class="buf-bar" id="buf-bar"></div></div>
+  </div>
+
+  <!-- Error screen -->
+  <div id="err-overlay">
+    <div class="err-icon">⚠️</div>
+    <div class="err-msg" id="err-msg">Failed to load stream.</div>
+    <button class="err-retry" onclick="retryLoad()">Retry</button>
   </div>
 
   <div class="track-panel-overlay">
@@ -148,14 +176,17 @@
 </div>
 
 <script>
-const video      = document.getElementById('video');
+const video       = document.getElementById('video');
 const playOverlay = document.getElementById('play-overlay');
 const bufOverlay  = document.getElementById('buf-overlay');
 const bufBar      = document.getElementById('buf-bar');
 const bufLabel    = document.getElementById('buf-label');
+const errOverlay  = document.getElementById('err-overlay');
+const errMsg      = document.getElementById('err-msg');
 
-const BUFFER_TARGET = 6; // seconds to buffer before playback starts
-let player = null, abrActive = true;
+const BUFFER_TARGET = 6; // seconds to buffer before starting playback
+let player = null, abrActive = true, currentUrl = null;
+
 shaka.polyfill.installAll();
 
 function toggleDropdown(openId, closeId) {
@@ -172,25 +203,45 @@ document.addEventListener('click', (e) => {
 async function initPlayer() {
   if (player) { await player.destroy(); player = null; }
   player = new shaka.Player(video);
+
   player.configure({
     streaming: {
       bufferingGoal: 60,
       rebufferingGoal: 2,
-      retryParameters: { maxAttempts: 10, baseDelay: 1000, backoffFactor: 1.3, timeout: 40000 },
+      retryParameters: {
+        maxAttempts: 10,
+        baseDelay: 1000,
+        backoffFactor: 1.3,
+        timeout: 40000
+      },
     },
+    abr: {
+      enabled: true,
+      defaultBandwidthEstimate: 500000, // start conservative to avoid thrashing
+    },
+    manifest: {
+      dash: {
+        ignoreMinBufferTime: true, // helps with isoff-main profile
+      }
+    }
+  });
+
+  player.addEventListener('error', (e) => {
+    console.error('Shaka error', e.detail);
+    bufOverlay.classList.remove('visible');
+    errMsg.textContent = `Playback error (code ${e.detail?.code ?? '?'}). Check console for details.`;
+    errOverlay.classList.add('visible');
   });
 }
 
-// Returns how many seconds are buffered from position 0
+// FIX: correctly reads buffered end from first range
 function getBuffered() {
   const buf = video.buffered;
-  for (let i = 0; i < buf.length; i++) {
-    if (buf.start(i) <= 0.5) return buf.end(i);
-  }
+  if (buf.length > 0) return buf.end(0);
   return 0;
 }
 
-// Wait until BUFFER_TARGET seconds are buffered, updating the progress bar
+// Wait until BUFFER_TARGET seconds buffered, updating progress bar
 function waitForBuffer() {
   return new Promise(resolve => {
     function check() {
@@ -208,29 +259,31 @@ function waitForBuffer() {
   });
 }
 
-// Click play → show buffer screen → wait 6s buffered → play normally
+// Click play → buffer screen → wait 6s buffered → play
 playOverlay.addEventListener('click', async () => {
   playOverlay.classList.add('hidden');
   bufOverlay.classList.add('visible');
 
-  // Start silent playback so browser fetches data, then immediately pause
   video.controls = false;
   try { await video.play(); } catch(_) {}
   video.pause();
 
-  // Wait until 6 seconds are buffered
   await waitForBuffer();
 
-  // Hide buffer screen, show controls, resume
   bufOverlay.classList.remove('visible');
   video.controls = true;
-  video.currentTime = 0; // start from beginning
+  // FIX: removed video.currentTime = 0 — that was flushing the buffer
+  // and forcing all init segments to be re-fetched, causing playback to stall
   video.play().catch(() => {});
 });
 
 async function loadVideo(url) {
+  currentUrl = url;
+  errOverlay.classList.remove('visible');
   video.controls = false;
   playOverlay.classList.remove('hidden');
+  bufBar.style.width = '0%';
+  bufLabel.textContent = 'Buffering… 0%';
 
   await initPlayer();
 
@@ -239,19 +292,26 @@ async function loadVideo(url) {
     renderQualityTracks();
     renderAudioTracks();
   } catch (e) {
-    console.error(e);
+    console.error('Load error', e);
     playOverlay.classList.add('hidden');
+    errMsg.textContent = `Failed to load stream (code ${e.code ?? '?'}). The URL may be invalid or expired.`;
+    errOverlay.classList.add('visible');
   }
+}
+
+function retryLoad() {
+  errOverlay.classList.remove('visible');
+  if (currentUrl) loadVideo(currentUrl);
 }
 
 /* ---------- quality / audio tracks ---------- */
 
 function formatBitrate(bps) {
   if (!bps) return '';
-  return bps >= 1000000 ? (bps/1000000).toFixed(1)+'M' : Math.round(bps/1000)+'k';
+  return bps >= 1000000 ? (bps / 1000000).toFixed(1) + 'M' : Math.round(bps / 1000) + 'k';
 }
 function qualityLabel(t) {
-  return t.height ? t.height+'p' : t.width ? t.width+'w' : 'Track '+t.id;
+  return t.height ? t.height + 'p' : t.width ? t.width + 'w' : 'Track ' + t.id;
 }
 
 function renderQualityTracks() {
@@ -264,7 +324,7 @@ function renderQualityTracks() {
     const key = t.height || t.width || t.id;
     if (!seen.has(key) || t.bandwidth > seen.get(key).bandwidth) seen.set(key, t);
   }
-  const unique = [...seen.values()].sort((a,b) => (b.height||0)-(a.height||0));
+  const unique = [...seen.values()].sort((a, b) => (b.height || 0) - (a.height || 0));
   if (!unique.length) {
     container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
     return;
@@ -292,7 +352,7 @@ function renderQualityTracks() {
       abrActive = false;
       player.configure({ abr: { enabled: false } });
       const match = player.getVariantTracks().find(t =>
-        (t.height||t.width||t.id) === (track.height||track.width||track.id)
+        (t.height || t.width || t.id) === (track.height || track.width || track.id)
       );
       if (match) player.selectVariantTrack(match, true);
       container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
@@ -303,8 +363,8 @@ function renderQualityTracks() {
 }
 
 const LANG_NAMES = {
-  hi:'Hindi', te:'Telugu', en:'English', ta:'Tamil',
-  ka:'Kannada', ma:'Malayalam', mar:'Marathi', be:'Bengali', un:'Default'
+  hi: 'Hindi', te: 'Telugu', en: 'English', ta: 'Tamil',
+  ka: 'Kannada', ml: 'Malayalam', mr: 'Marathi', bn: 'Bengali', und: 'Default'
 };
 function langLabel(lang, title) {
   if (title && title !== lang) return title;
@@ -315,10 +375,11 @@ function renderAudioTracks() {
   const container = document.getElementById('audio-list');
   container.innerHTML = '';
   const tracks = player.getVariantTracks();
-  const seen = new Set(); const langs = [];
+  const seen = new Set();
+  const langs = [];
   for (const t of tracks) {
     const key = t.language || 'und';
-    if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label||'' }); }
+    if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label || '' }); }
   }
   if (!langs.length) {
     container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
