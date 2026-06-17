@@ -210,7 +210,7 @@ async function initPlayer() {
 
   player.configure({
     streaming: {
-      bufferingGoal: 30,        // keep 30s ahead once playing
+      bufferingGoal: 10,        // keep 30s ahead once playing
       rebufferingGoal: 3,       // resume after 3s buffered (was 2)
       retryParameters: {
         maxAttempts: 6,
