@@ -60,7 +60,6 @@
     height: 100%; width: 0%; background: #6c63ff;
     border-radius: 4px; transition: width 0.3s ease;
   }
-  /* FIX: timeout sub-label */
   .buf-sublabel {
     color: #6b6b8a; font-size: 11px;
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -79,7 +78,6 @@
     font-family: 'Segoe UI', system-ui, sans-serif;
     text-align: center; max-width: 280px; line-height: 1.5;
   }
-  /* FIX: error detail sub-text */
   .err-detail {
     color: #6b6b8a; font-size: 11px;
     font-family: 'Segoe UI', system-ui, sans-serif;
@@ -189,13 +187,12 @@ const errOverlay  = document.getElementById('err-overlay');
 const errMsg      = document.getElementById('err-msg');
 const errDetail   = document.getElementById('err-detail');
 
-const BUFFER_TARGET = 10;      // seconds needed before auto-play
-const BUFFER_TIMEOUT_MS = 25000; // FIX: give up after 25s of no progress
+const BUFFER_TARGET    = 10;     // seconds to buffer before auto-play
+const BUFFER_TIMEOUT_MS = 25000; // give up after 25s of no progress
+const MAX_SEGMENT_ERRORS = 5;
 
 let player = null, currentUrl = null, bufferCheckRaf = null;
-let bufferStartTime = null;    // FIX: track when buffering started
-let segmentErrorCount = 0;     // FIX: count silent segment errors
-const MAX_SEGMENT_ERRORS = 5;  // FIX: show error after too many silent failures
+let segmentErrorCount = 0;
 
 shaka.polyfill.installAll();
 
@@ -216,13 +213,12 @@ function getSafeMaxBandwidth(tracks) {
   const secondHighest = bws[bws.length - 2];
   const highest = bws[bws.length - 1];
   if (highest > secondHighest * 3) {
-    console.warn(`Inflated bandwidth detected: ${highest} bps vs ${secondHighest} bps. Capping ABR.`);
+    console.warn('Inflated bandwidth detected, capping ABR at', secondHighest);
     return secondHighest;
   }
   return Infinity;
 }
 
-// FIX: helper to show fatal error with optional detail line
 function showError(msg, detail = '') {
   cancelAnimationFrame(bufferCheckRaf);
   bufOverlay.classList.remove('visible');
@@ -234,33 +230,27 @@ function showError(msg, detail = '') {
 
 async function initPlayer() {
   if (player) { await player.destroy(); player = null; }
-  segmentErrorCount = 0; // FIX: reset error counter on new player
+  segmentErrorCount = 0;
   player = new shaka.Player(video);
 
   player.configure({
     streaming: {
-      bufferingGoal: 10,
+      bufferingGoal: 12,
       rebufferingGoal: 3,
       retryParameters: {
-        maxAttempts: 2,
-        baseDelay: 300,
+        maxAttempts: 3,
+        baseDelay: 500,
         backoffFactor: 1.5,
-        timeout: 8000,
+        timeout: 10000,
       },
       stallEnabled: true,
       stallThreshold: 1,
       stallSkip: 0.5,
-      jumpLargeGaps: true,
-      smallGapLimit: 1.5,
     },
     abr: {
       enabled: false,
       defaultBandwidthEstimate: 300000,
-      bandwidthUpgradeTarget: 0.9,
-      bandwidthDowngradeTarget: 0.95,
-      restrictions: {
-        maxBandwidth: 700000,
-      },
+      restrictions: { maxBandwidth: 700000 },
     },
     manifest: {
       dash: {
@@ -273,95 +263,103 @@ async function initPlayer() {
   player.addEventListener('error', (e) => {
     const detail = e.detail;
     const isNetworkError = detail?.category === shaka.util.Error.Category.NETWORK;
-
     if (isNetworkError) {
       segmentErrorCount++;
-      console.warn(`Segment error #${segmentErrorCount}:`, detail?.code, detail?.data?.[0]);
-
-      // FIX: after too many segment errors, surface the error instead of spinning forever
+      console.warn(`Segment error #${segmentErrorCount} (code ${detail?.code}):`, detail?.data?.[0]);
       if (segmentErrorCount >= MAX_SEGMENT_ERRORS) {
         showError(
-          'Stream failed to load.',
-          `Too many segment errors (code ${detail?.code ?? '?'}). Check your Cloudflare URL or CORS headers.`
+          'Stream failed to load segments.',
+          `Too many fetch errors (code ${detail?.code ?? '?'}). Check your Cloudflare URL or CORS headers.`
         );
       }
       return;
     }
-
-    // Fatal non-network errors (manifest parse, DRM, media decode)
     console.error('Shaka fatal error', detail);
     showError(
       `Playback error (code ${detail?.code ?? '?'}).`,
       detail?.category === shaka.util.Error.Category.MANIFEST
-        ? 'The stream manifest could not be parsed. Check the MPD URL.'
-        : 'Try a different quality or retry.'
+        ? 'Could not parse the stream manifest. Check the MPD URL.'
+        : 'Try retrying or selecting a different quality.'
     );
   });
 }
 
-function getBuffered() {
+// KEY FIX: use Shaka's getBufferedInfo() which is always accurate,
+// even before video.buffered has updated. Falls back to native buffered.
+function getBufferedAhead() {
+  const t = video.currentTime;
+  try {
+    const info = player.getBufferedInfo();
+    for (const r of (info.total || [])) {
+      if (t >= r.start - 0.1 && t <= r.end) return r.end - t;
+    }
+    if (info.total && info.total.length) {
+      // Not inside any range yet — return end of first range (initial load)
+      return Math.max(0, info.total[0].end - t);
+    }
+  } catch(e) { /* player not ready yet */ }
+
+  // Native fallback
   const buf = video.buffered;
   if (!buf.length) return 0;
-  const t = video.currentTime;
   for (let i = 0; i < buf.length; i++) {
-    if (t >= buf.start(i) && t <= buf.end(i)) return buf.end(i);
+    if (t >= buf.start(i) - 0.1 && t <= buf.end(i)) return buf.end(i) - t;
   }
-  return buf.end(buf.length - 1);
+  return Math.max(0, buf.end(buf.length - 1) - t);
+}
+
+function doAutoPlay() {
+  cancelAnimationFrame(bufferCheckRaf);
+  bufOverlay.classList.remove('visible');
+  video.controls = true;
+  const tracks = player.getVariantTracks();
+  const safeBw = getSafeMaxBandwidth(tracks);
+  player.configure({
+    abr: {
+      enabled: true,
+      restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
+    }
+  });
+  video.play().catch(err => console.error('play() rejected:', err?.name, err?.message));
 }
 
 function startBufferWatch() {
-  bufferStartTime = Date.now(); // FIX: record start time for timeout
   let lastProgress = Date.now();
-  let lastBuffered = 0;
+  let lastBuffered = -1;
 
   function check() {
-    const buffered = getBuffered();
+    const buffered = getBufferedAhead();
     const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
     bufBar.style.width = pct + '%';
-    bufLabel.textContent = `Loading… ${Math.round(pct)}%`;
+    bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
 
-    // FIX: track progress to detect a true stall vs just slow start
-    if (buffered > lastBuffered) {
+    if (buffered > lastBuffered + 0.05) {
       lastBuffered = buffered;
       lastProgress = Date.now();
       bufSublabel.textContent = '';
     }
 
-    // FIX: timeout — if no progress for BUFFER_TIMEOUT_MS, show error
     const elapsed = Date.now() - lastProgress;
+
     if (elapsed > BUFFER_TIMEOUT_MS) {
       showError(
         'Stream timed out.',
-        'No data received. The Cloudflare link may be broken, expired, or blocked by CORS.'
+        'No data loaded after 25s. The link may be broken, expired, or blocked by CORS.'
       );
       return;
     }
 
-    // FIX: show "slow connection" hint after 8s of no progress
     if (elapsed > 8000) {
       bufSublabel.textContent = 'Slow connection — still trying…';
     }
 
     if (buffered >= BUFFER_TARGET) {
-      bufOverlay.classList.remove('visible');
-      video.controls = true;
-
-      const tracks = player.getVariantTracks();
-      const safeBw = getSafeMaxBandwidth(tracks);
-      player.configure({
-        abr: {
-          enabled: true,
-          restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
-        }
-      });
-
-      video.play().catch(err => {
-        console.error('play() rejected:', err?.name, err?.message);
-      });
+      doAutoPlay();
     } else {
       bufferCheckRaf = requestAnimationFrame(check);
     }
   }
+
   bufferCheckRaf = requestAnimationFrame(check);
 }
 
@@ -369,14 +367,14 @@ playOverlay.addEventListener('click', async () => {
   playOverlay.classList.add('hidden');
   bufOverlay.classList.add('visible');
   bufBar.style.width = '0%';
-  bufLabel.textContent = 'Loading… 0%';
+  bufLabel.textContent = 'Buffering… 0%';
   bufSublabel.textContent = '';
-  segmentErrorCount = 0; // FIX: reset on each play attempt
+  segmentErrorCount = 0;
 
-  // FIX: ensure video is paused so Shaka buffers without trying to play
+  // Ensure paused so Shaka buffers without auto-advancing
   video.pause();
 
-  // FIX: wait for tracks — retry up to 20 times (2s) if manifest is still parsing
+  // Wait up to 2s for tracks if manifest is still parsing
   let tracks = player.getVariantTracks();
   if (!tracks.length) {
     for (let i = 0; i < 20; i++) {
@@ -389,8 +387,9 @@ playOverlay.addEventListener('click', async () => {
   if (tracks.length) {
     const lowest = tracks.reduce((a, b) => a.bandwidth < b.bandwidth ? a : b);
     player.selectVariantTrack(lowest, false);
+    console.log('Locked to lowest quality for buffering:', lowest.bandwidth, 'bps');
   } else {
-    console.warn('No tracks available after waiting — proceeding anyway');
+    console.warn('No variant tracks found after waiting');
   }
 
   startBufferWatch();
@@ -410,23 +409,19 @@ async function loadVideo(url) {
 
   try {
     await player.load(url);
-
-    // FIX: explicitly pause after load so buffering starts cleanly
-    video.pause();
-
+    video.pause(); // ensure paused after load
     renderQualityTracks();
     renderAudioTracks();
+    console.log('Stream loaded. Tracks:', player.getVariantTracks().length);
   } catch (e) {
     console.error('Load error', e);
-    // FIX: more specific error messages based on error code
-    let msg = `Failed to load stream (code ${e.code ?? '?'}).`;
     let detail = 'The URL may be invalid or expired.';
     if (e.code === 1001 || e.code === 1002 || e.code === 1003) {
-      detail = 'Network error — check if the Cloudflare URL is reachable and CORS headers are set.';
+      detail = 'Network error — check if the Cloudflare URL is reachable and CORS is set.';
     } else if (e.code === 4001 || e.code === 4016) {
-      detail = 'Manifest parse error — make sure the URL points to a valid .mpd file.';
+      detail = 'Manifest parse error — confirm the URL points to a valid .mpd file.';
     }
-    showError(msg, detail);
+    showError(`Failed to load stream (code ${e.code ?? '?'}).`, detail);
   }
 }
 
@@ -436,7 +431,7 @@ function retryLoad() {
   if (currentUrl) loadVideo(currentUrl);
 }
 
-/* ---------- quality / audio tracks ---------- */
+/* ---------- quality / audio track panels ---------- */
 
 function formatBitrate(bps) {
   if (!bps) return '';
@@ -462,34 +457,29 @@ function renderQualityTracks() {
   }
   document.getElementById('video-dot').style.display = 'inline-block';
 
+  const allBws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
+  const highest = allBws[allBws.length - 1];
+  const secondHighest = allBws[allBws.length - 2];
+  const isInflatedPresent = allBws.length > 1 && highest > secondHighest * 3;
+
   const autoBtn = document.createElement('button');
   autoBtn.className = 'tp-item active';
   autoBtn.innerHTML = `Auto <span class="tp-badge" style="background:rgba(74,222,128,0.2);color:#4ade80">ABR</span>`;
   autoBtn.onclick = () => {
     const safeBw = getSafeMaxBandwidth(player.getVariantTracks());
-    player.configure({
-      abr: {
-        enabled: true,
-        restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
-      }
-    });
+    player.configure({ abr: { enabled: true, restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 } } });
     container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
     autoBtn.classList.add('active');
   };
   container.appendChild(autoBtn);
 
-  const allBws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a,b) => a - b);
-  const secondHighest = allBws[allBws.length - 2];
-  const highest = allBws[allBws.length - 1];
-  const isInflatedPresent = highest > secondHighest * 3;
-
   unique.forEach(track => {
     const isInflated = isInflatedPresent && track.bandwidth === highest;
     const btn = document.createElement('button');
+    btn.className = 'tp-item';
     const qlbl = qualityLabel(track);
     const blbl = formatBitrate(track.bandwidth);
-    btn.className = 'tp-item';
-    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24" title="May stall">⚠</span>` : ''}`;
+    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24">⚠</span>` : ''}`;
     btn.onclick = () => {
       player.configure({ abr: { enabled: false, restrictions: { maxBandwidth: Infinity } } });
       const match = player.getVariantTracks().find(t =>
@@ -527,10 +517,8 @@ function renderAudioTracks() {
     return;
   }
   document.getElementById('audio-dot').style.display = 'inline-block';
-
   const active = tracks.find(t => t.active);
   const activeLang = active?.language || langs[0].language;
-
   langs.forEach(({ language, label }) => {
     const btn = document.createElement('button');
     btn.className = 'tp-item' + (language === activeLang ? ' active' : '');
