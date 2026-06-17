@@ -391,9 +391,13 @@ playOverlay.addEventListener('click', async () => {
   }
 
   if (tracks.length) {
-    const lowest = tracks.reduce((a, b) => a.bandwidth < b.bandwidth ? a : b);
-    player.selectVariantTrack(lowest, false);
-    console.log('Locked to lowest quality for buffering:', lowest.bandwidth, 'bps');
+   const videoTracks = tracks.filter(
+  t => t.height && t.language === 'te'
+);
+
+console.log(videoTracks);
+
+player.selectVariantTrack(videoTracks[0], true);
   } else {
     console.warn('No variant tracks found after waiting');
   }
@@ -415,6 +419,7 @@ async function loadVideo(url) {
 
   try {
     await player.load(url);
+   console.log(player.getVariantTracks());
    console.log(
   'duration=',
   video.duration,
