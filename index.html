@@ -159,7 +159,9 @@ const bufBar       = document.getElementById('buf-bar');
 const bufLabel     = document.getElementById('buf-label');
 const playOverlay  = document.getElementById('play-overlay');
 
-playOverlay.classList.add('visible');
+let player = null, abrActive = true;  
+let previewReady = false;  
+const PREVIEW_SEC = 10;   // seconds to silently buffer before showing play button
 shaka.polyfill.installAll();
 
 function toggleDropdown(openId, closeId) {
