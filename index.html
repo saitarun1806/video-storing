@@ -329,6 +329,11 @@ function startBufferWatch() {
 
   function check() {
     const buffered = getBufferedAhead();
+   console.log(
+  'buffered=', buffered,
+  'readyState=', video.readyState,
+  'paused=', video.paused
+);
     const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
     bufBar.style.width = pct + '%';
     bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
@@ -354,6 +359,7 @@ function startBufferWatch() {
     }
 
     if (buffered >= BUFFER_TARGET) {
+     console.log('doAutoPlay() called');
       doAutoPlay();
     } else {
       bufferCheckRaf = requestAnimationFrame(check);
@@ -409,6 +415,12 @@ async function loadVideo(url) {
 
   try {
     await player.load(url);
+   console.log(
+  'duration=',
+  video.duration,
+  'readyState=',
+  video.readyState
+);
     video.pause(); // ensure paused after load
     renderQualityTracks();
     renderAudioTracks();
