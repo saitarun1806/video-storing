@@ -187,9 +187,8 @@ const errOverlay  = document.getElementById('err-overlay');
 const errMsg      = document.getElementById('err-msg');
 const errDetail   = document.getElementById('err-detail');
 
-const BUFFER_TARGET    = 10;     // seconds to buffer before auto-play
-const BUFFER_TIMEOUT_MS = 180000;// give up after 25s of no progress
-const MAX_SEGMENT_ERRORS = 1000;
+const BUFFER_TARGET     = 10;
+const BUFFER_TIMEOUT_MS = 180000;
 
 let player = null, currentUrl = null, bufferCheckRaf = null;
 let segmentErrorCount = 0;
@@ -211,7 +210,7 @@ function getSafeMaxBandwidth(tracks) {
   const bws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
   if (bws.length <= 1) return Infinity;
   const secondHighest = bws[bws.length - 2];
-  const highest = bws[bws.length - 1];
+  const highest       = bws[bws.length - 1];
   if (highest > secondHighest * 3) {
     console.warn('Inflated bandwidth detected, capping ABR at', secondHighest);
     return secondHighest;
@@ -223,8 +222,8 @@ function showError(msg, detail = '') {
   cancelAnimationFrame(bufferCheckRaf);
   bufOverlay.classList.remove('visible');
   playOverlay.classList.add('hidden');
-  errMsg.textContent = msg;
-  errDetail.textContent = detail;
+  errMsg.textContent     = msg;
+  errDetail.textContent  = detail;
   errOverlay.classList.add('visible');
 }
 
@@ -235,18 +234,18 @@ async function initPlayer() {
 
   player.configure({
     streaming: {
-      bufferingGoal: 12,
-      rebufferingGoal: 3,
+      bufferingGoal:    12,
+      rebufferingGoal:  3,
       retryParameters: {
-      maxAttempts: 9999,
-      baseDelay: 1000,
-      backoffFactor: 1.2,
-      fuzzFactor: 0.5,
-      timeout: 30000,
-    },
-      stallEnabled: true,
+        maxAttempts:   9999,
+        baseDelay:     1000,
+        backoffFactor: 1.2,
+        fuzzFactor:    0.5,
+        timeout:       30000,
+      },
+      stallEnabled:  true,
       stallThreshold: 1,
-      stallSkip: 0.5,
+      stallSkip:     0.5,
     },
     abr: {
       enabled: false,
@@ -255,25 +254,20 @@ async function initPlayer() {
     },
     manifest: {
       dash: {
-        ignoreMinBufferTime: true,
+        ignoreMinBufferTime:              true,
         ignoreSuggestedPresentationDelay: true,
       }
     }
   });
 
   player.addEventListener('error', (e) => {
-    const detail = e.detail;
+    const detail        = e.detail;
     const isNetworkError = detail?.category === shaka.util.Error.Category.NETWORK;
     if (isNetworkError) {
-  segmentErrorCount++;
-
-  console.warn(
-    `Retrying segment (${segmentErrorCount})`,
-    detail?.data?.[0]
-  );
-
-  return;
-}
+      segmentErrorCount++;
+      console.warn(`Retrying segment (${segmentErrorCount})`, detail?.data?.[0]);
+      return;
+    }
     console.error('Shaka fatal error', detail);
     showError(
       `Playback error (code ${detail?.code ?? '?'}).`,
@@ -284,8 +278,6 @@ async function initPlayer() {
   });
 }
 
-// KEY FIX: use Shaka's getBufferedInfo() which is always accurate,
-// even before video.buffered has updated. Falls back to native buffered.
 function getBufferedAhead() {
   const t = video.currentTime;
   try {
@@ -294,12 +286,10 @@ function getBufferedAhead() {
       if (t >= r.start - 0.1 && t <= r.end) return r.end - t;
     }
     if (info.total && info.total.length) {
-      // Not inside any range yet — return end of first range (initial load)
       return Math.max(0, info.total[0].end - t);
     }
-  } catch(e) { /* player not ready yet */ }
+  } catch(e) { /* player not ready */ }
 
-  // Native fallback
   const buf = video.buffered;
   if (!buf.length) return 0;
   for (let i = 0; i < buf.length; i++) {
@@ -312,14 +302,15 @@ function doAutoPlay() {
   cancelAnimationFrame(bufferCheckRaf);
   bufOverlay.classList.remove('visible');
   video.controls = true;
-  const tracks = player.getVariantTracks();
-  const safeBw = getSafeMaxBandwidth(tracks);
+  const tracks  = player.getVariantTracks();
+  const safeBw  = getSafeMaxBandwidth(tracks);
   player.configure({
     abr: {
       enabled: true,
       restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
     }
   });
+  console.log('doAutoPlay() called');
   video.play().catch(err => console.error('play() rejected:', err?.name, err?.message));
 }
 
@@ -329,18 +320,15 @@ function startBufferWatch() {
 
   function check() {
     const buffered = getBufferedAhead();
-   console.log(
-  'buffered=', buffered,
-  'readyState=', video.readyState,
-  'paused=', video.paused
-);
+    console.log('buffered=', buffered, 'readyState=', video.readyState, 'paused=', video.paused);
+
     const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
-    bufBar.style.width = pct + '%';
-    bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
+    bufBar.style.width     = pct + '%';
+    bufLabel.textContent   = `Buffering… ${Math.round(pct)}%`;
 
     if (buffered > lastBuffered + 0.05) {
-      lastBuffered = buffered;
-      lastProgress = Date.now();
+      lastBuffered  = buffered;
+      lastProgress  = Date.now();
       bufSublabel.textContent = '';
     }
 
@@ -349,7 +337,7 @@ function startBufferWatch() {
     if (elapsed > BUFFER_TIMEOUT_MS) {
       showError(
         'Stream timed out.',
-        'No data loaded after 25s. The link may be broken, expired, or blocked by CORS.'
+        'No data loaded after 3 minutes. The link may be broken, expired, or blocked by CORS.'
       );
       return;
     }
@@ -359,7 +347,6 @@ function startBufferWatch() {
     }
 
     if (buffered >= BUFFER_TARGET) {
-     console.log('doAutoPlay() called');
       doAutoPlay();
     } else {
       bufferCheckRaf = requestAnimationFrame(check);
@@ -369,18 +356,25 @@ function startBufferWatch() {
   bufferCheckRaf = requestAnimationFrame(check);
 }
 
+// ─── FIX: pick lowest-bandwidth track regardless of language ───
+function pickStartTrack(tracks) {
+  if (!tracks || !tracks.length) return null;
+  // Sort ascending by bandwidth, pick lowest to buffer fast
+  const sorted = [...tracks].sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0));
+  return sorted[0];
+}
+
 playOverlay.addEventListener('click', async () => {
   playOverlay.classList.add('hidden');
   bufOverlay.classList.add('visible');
-  bufBar.style.width = '0%';
-  bufLabel.textContent = 'Buffering… 0%';
+  bufBar.style.width      = '0%';
+  bufLabel.textContent    = 'Buffering… 0%';
   bufSublabel.textContent = '';
-  segmentErrorCount = 0;
+  segmentErrorCount       = 0;
 
-  // Ensure paused so Shaka buffers without auto-advancing
   video.pause();
 
-  // Wait up to 2s for tracks if manifest is still parsing
+  // Wait up to 2s for manifest to parse and tracks to appear
   let tracks = player.getVariantTracks();
   if (!tracks.length) {
     for (let i = 0; i < 20; i++) {
@@ -391,15 +385,13 @@ playOverlay.addEventListener('click', async () => {
   }
 
   if (tracks.length) {
-   const videoTracks = tracks.filter(
-  t => t.height && t.language === 'te'
-);
-
-console.log(videoTracks);
-
-player.selectVariantTrack(videoTracks[0], true);
+    const startTrack = pickStartTrack(tracks);
+    if (startTrack) {
+      console.log('Starting with track:', startTrack.height + 'p', startTrack.bandwidth, startTrack.language);
+      player.selectVariantTrack(startTrack, true);
+    }
   } else {
-    console.warn('No variant tracks found after waiting');
+    console.warn('No variant tracks found after waiting — proceeding anyway');
   }
 
   startBufferWatch();
@@ -412,21 +404,16 @@ async function loadVideo(url) {
   bufOverlay.classList.remove('visible');
   video.controls = false;
   playOverlay.classList.remove('hidden');
-  bufBar.style.width = '0%';
+  bufBar.style.width      = '0%';
   bufSublabel.textContent = '';
 
   await initPlayer();
 
   try {
     await player.load(url);
-   console.log(player.getVariantTracks());
-   console.log(
-  'duration=',
-  video.duration,
-  'readyState=',
-  video.readyState
-);
-    video.pause(); // ensure paused after load
+    console.log('Tracks after load:', player.getVariantTracks());
+    console.log('duration=', video.duration, 'readyState=', video.readyState);
+    video.pause();
     renderQualityTracks();
     renderAudioTracks();
     console.log('Stream loaded. Tracks:', player.getVariantTracks().length);
@@ -448,11 +435,13 @@ function retryLoad() {
   if (currentUrl) loadVideo(currentUrl);
 }
 
-/* ---------- quality / audio track panels ---------- */
+/* ── quality / audio track panels ── */
 
 function formatBitrate(bps) {
   if (!bps) return '';
-  return bps >= 1000000 ? (bps / 1000000).toFixed(1) + 'M' : Math.round(bps / 1000) + 'k';
+  return bps >= 1000000
+    ? (bps / 1000000).toFixed(1) + 'M'
+    : Math.round(bps / 1000) + 'k';
 }
 function qualityLabel(t) {
   return t.height ? t.height + 'p' : t.width ? t.width + 'w' : 'Track ' + t.id;
@@ -462,7 +451,7 @@ function renderQualityTracks() {
   const container = document.getElementById('quality-list');
   container.innerHTML = '';
   const tracks = player.getVariantTracks();
-  const seen = new Map();
+  const seen   = new Map();
   for (const t of tracks) {
     const key = t.height || t.width || t.id;
     if (!seen.has(key) || t.bandwidth > seen.get(key).bandwidth) seen.set(key, t);
@@ -474,8 +463,8 @@ function renderQualityTracks() {
   }
   document.getElementById('video-dot').style.display = 'inline-block';
 
-  const allBws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
-  const highest = allBws[allBws.length - 1];
+  const allBws        = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
+  const highest       = allBws[allBws.length - 1];
   const secondHighest = allBws[allBws.length - 2];
   const isInflatedPresent = allBws.length > 1 && highest > secondHighest * 3;
 
@@ -492,11 +481,11 @@ function renderQualityTracks() {
 
   unique.forEach(track => {
     const isInflated = isInflatedPresent && track.bandwidth === highest;
-    const btn = document.createElement('button');
-    btn.className = 'tp-item';
-    const qlbl = qualityLabel(track);
-    const blbl = formatBitrate(track.bandwidth);
-    btn.innerHTML = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24">⚠</span>` : ''}`;
+    const btn        = document.createElement('button');
+    btn.className    = 'tp-item';
+    const qlbl       = qualityLabel(track);
+    const blbl       = formatBitrate(track.bandwidth);
+    btn.innerHTML    = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24">⚠</span>` : ''}`;
     btn.onclick = () => {
       player.configure({ abr: { enabled: false, restrictions: { maxBandwidth: Infinity } } });
       const match = player.getVariantTracks().find(t =>
@@ -523,8 +512,8 @@ function renderAudioTracks() {
   const container = document.getElementById('audio-list');
   container.innerHTML = '';
   const tracks = player.getVariantTracks();
-  const seen = new Set();
-  const langs = [];
+  const seen   = new Set();
+  const langs  = [];
   for (const t of tracks) {
     const key = t.language || 'und';
     if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label || '' }); }
@@ -534,10 +523,10 @@ function renderAudioTracks() {
     return;
   }
   document.getElementById('audio-dot').style.display = 'inline-block';
-  const active = tracks.find(t => t.active);
+  const active     = tracks.find(t => t.active);
   const activeLang = active?.language || langs[0].language;
   langs.forEach(({ language, label }) => {
-    const btn = document.createElement('button');
+    const btn     = document.createElement('button');
     btn.className = 'tp-item' + (language === activeLang ? ' active' : '');
     btn.textContent = langLabel(language, label);
     btn.onclick = () => {
@@ -549,7 +538,7 @@ function renderAudioTracks() {
   });
 }
 
-const params = new URLSearchParams(window.location.search);
+const params  = new URLSearchParams(window.location.search);
 const autoUrl = params.get('url');
 if (autoUrl) loadVideo(autoUrl.trim());
 </script>
