@@ -14,8 +14,7 @@
 
   #play-overlay {
     position: absolute; inset: 0; z-index: 25;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
   }
   #play-overlay.hidden { display: none; }
   .play-btn-circle {
@@ -43,8 +42,7 @@
   .buf-spinner {
     width: 46px; height: 46px;
     border: 3px solid rgba(108,99,255,0.2);
-    border-top-color: #6c63ff;
-    border-radius: 50%;
+    border-top-color: #6c63ff; border-radius: 50%;
     animation: spin 0.85s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -52,18 +50,9 @@
     color: #e8e8f0; font-size: 13px; font-weight: 500;
     font-family: 'Segoe UI', system-ui, sans-serif; letter-spacing: 0.3px;
   }
-  .buf-bar-wrap {
-    width: 180px; height: 4px; background: rgba(255,255,255,0.1);
-    border-radius: 4px; overflow: hidden;
-  }
-  .buf-bar {
-    height: 100%; width: 0%; background: #6c63ff;
-    border-radius: 4px; transition: width 0.3s ease;
-  }
-  .buf-sublabel {
-    color: #6b6b8a; font-size: 11px;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-  }
+  .buf-bar-wrap { width: 180px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
+  .buf-bar { height: 100%; width: 0%; background: #6c63ff; border-radius: 4px; transition: width 0.3s ease; }
+  .buf-sublabel { color: #6b6b8a; font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif; }
 
   #err-overlay {
     position: absolute; inset: 0; z-index: 35;
@@ -189,6 +178,7 @@ const errDetail   = document.getElementById('err-detail');
 
 const BUFFER_TARGET     = 10;
 const BUFFER_TIMEOUT_MS = 180000;
+const READY_STATE_TIMEOUT_MS = 15000; // max wait for readyState >= 2
 
 let player = null, currentUrl = null, bufferCheckRaf = null;
 let segmentErrorCount = 0;
@@ -222,8 +212,8 @@ function showError(msg, detail = '') {
   cancelAnimationFrame(bufferCheckRaf);
   bufOverlay.classList.remove('visible');
   playOverlay.classList.add('hidden');
-  errMsg.textContent     = msg;
-  errDetail.textContent  = detail;
+  errMsg.textContent    = msg;
+  errDetail.textContent = detail;
   errOverlay.classList.add('visible');
 }
 
@@ -234,8 +224,8 @@ async function initPlayer() {
 
   player.configure({
     streaming: {
-      bufferingGoal:    12,
-      rebufferingGoal:  3,
+      bufferingGoal:   12,
+      rebufferingGoal: 3,
       retryParameters: {
         maxAttempts:   9999,
         baseDelay:     1000,
@@ -243,9 +233,9 @@ async function initPlayer() {
         fuzzFactor:    0.5,
         timeout:       30000,
       },
-      stallEnabled:  true,
+      stallEnabled:   true,
       stallThreshold: 1,
-      stallSkip:     0.5,
+      stallSkip:      0.5,
     },
     abr: {
       enabled: false,
@@ -261,7 +251,7 @@ async function initPlayer() {
   });
 
   player.addEventListener('error', (e) => {
-    const detail        = e.detail;
+    const detail         = e.detail;
     const isNetworkError = detail?.category === shaka.util.Error.Category.NETWORK;
     if (isNetworkError) {
       segmentErrorCount++;
@@ -272,7 +262,7 @@ async function initPlayer() {
     showError(
       `Playback error (code ${detail?.code ?? '?'}).`,
       detail?.category === shaka.util.Error.Category.MANIFEST
-        ? 'Could not parse the stream manifest. Check the MPD URL.'
+        ? 'Could not parse the stream manifest.'
         : 'Try retrying or selecting a different quality.'
     );
   });
@@ -298,20 +288,70 @@ function getBufferedAhead() {
   return Math.max(0, buf.end(buf.length - 1) - t);
 }
 
-function doAutoPlay() {
+// Wait for video.readyState to reach at least HAVE_FUTURE_DATA (2)
+function waitForReadyState(minState, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= minState) { resolve(); return; }
+    const deadline = setTimeout(() => {
+      video.removeEventListener('canplay', onReady);
+      video.removeEventListener('canplaythrough', onReady);
+      video.removeEventListener('loadeddata', onReady);
+      reject(new Error('readyState timeout'));
+    }, timeoutMs);
+    function onReady() {
+      if (video.readyState >= minState) {
+        clearTimeout(deadline);
+        video.removeEventListener('canplay', onReady);
+        video.removeEventListener('canplaythrough', onReady);
+        video.removeEventListener('loadeddata', onReady);
+        resolve();
+      }
+    }
+    video.addEventListener('canplay', onReady);
+    video.addEventListener('canplaythrough', onReady);
+    video.addEventListener('loadeddata', onReady);
+  });
+}
+
+async function doAutoPlay() {
   cancelAnimationFrame(bufferCheckRaf);
+  bufLabel.textContent = 'Starting playback…';
+
+  // KEY FIX: wait until browser can actually play (readyState >= 2)
+  // readyState=1 means data is in Shaka's buffer but not yet decoded by the browser
+  try {
+    console.log('Waiting for readyState >= 2, current:', video.readyState);
+    await waitForReadyState(2, READY_STATE_TIMEOUT_MS);
+    console.log('readyState reached:', video.readyState);
+  } catch(e) {
+    console.warn('readyState wait timed out, trying play() anyway');
+  }
+
   bufOverlay.classList.remove('visible');
   video.controls = true;
-  const tracks  = player.getVariantTracks();
-  const safeBw  = getSafeMaxBandwidth(tracks);
+
+  const tracks = player.getVariantTracks();
+  const safeBw = getSafeMaxBandwidth(tracks);
   player.configure({
     abr: {
       enabled: true,
       restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
     }
   });
-  console.log('doAutoPlay() called');
-  video.play().catch(err => console.error('play() rejected:', err?.name, err?.message));
+
+  console.log('doAutoPlay() called, readyState=', video.readyState);
+  try {
+    await video.play();
+    console.log('play() succeeded');
+  } catch(err) {
+    console.error('play() rejected:', err?.name, err?.message);
+    // NotAllowedError = autoplay blocked by browser, show manual play button
+    if (err?.name === 'NotAllowedError') {
+      bufOverlay.classList.remove('visible');
+      video.controls = true;
+      // video is ready, user just needs to tap play in the native controls
+    }
+  }
 }
 
 function startBufferWatch() {
@@ -323,12 +363,12 @@ function startBufferWatch() {
     console.log('buffered=', buffered, 'readyState=', video.readyState, 'paused=', video.paused);
 
     const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
-    bufBar.style.width     = pct + '%';
-    bufLabel.textContent   = `Buffering… ${Math.round(pct)}%`;
+    bufBar.style.width   = pct + '%';
+    bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
 
     if (buffered > lastBuffered + 0.05) {
-      lastBuffered  = buffered;
-      lastProgress  = Date.now();
+      lastBuffered            = buffered;
+      lastProgress            = Date.now();
       bufSublabel.textContent = '';
     }
 
@@ -337,7 +377,7 @@ function startBufferWatch() {
     if (elapsed > BUFFER_TIMEOUT_MS) {
       showError(
         'Stream timed out.',
-        'No data loaded after 3 minutes. The link may be broken, expired, or blocked by CORS.'
+        'No data received. The link may be broken, expired, or blocked by CORS.'
       );
       return;
     }
@@ -347,7 +387,7 @@ function startBufferWatch() {
     }
 
     if (buffered >= BUFFER_TARGET) {
-      doAutoPlay();
+      doAutoPlay(); // async — does not block the RAF loop
     } else {
       bufferCheckRaf = requestAnimationFrame(check);
     }
@@ -356,12 +396,9 @@ function startBufferWatch() {
   bufferCheckRaf = requestAnimationFrame(check);
 }
 
-// ─── FIX: pick lowest-bandwidth track regardless of language ───
 function pickStartTrack(tracks) {
   if (!tracks || !tracks.length) return null;
-  // Sort ascending by bandwidth, pick lowest to buffer fast
-  const sorted = [...tracks].sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0));
-  return sorted[0];
+  return [...tracks].sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0))[0];
 }
 
 playOverlay.addEventListener('click', async () => {
@@ -374,7 +411,6 @@ playOverlay.addEventListener('click', async () => {
 
   video.pause();
 
-  // Wait up to 2s for manifest to parse and tracks to appear
   let tracks = player.getVariantTracks();
   if (!tracks.length) {
     for (let i = 0; i < 20; i++) {
