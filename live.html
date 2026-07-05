@@ -1,7 +1,4 @@
-export default {
-  async fetch(request) {
 
-    const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -88,7 +85,7 @@ document.addEventListener("dragstart",e=>e.preventDefault());
 const countryRes=await fetch("https://ipapi.co/json/");
 const countryData=await countryRes.json();
 
-if(countryData.country_code!=="IN"){
+if(countryData.country_code =="IN"){
 
 document.body.innerHTML=`
 <div style="
@@ -430,12 +427,4 @@ console.error(e);
 
 </body>
 </html>
-`;
 
-    return new Response(html,{
-      headers:{
-        "content-type":"text/html;charset=UTF-8"
-      }
-    });
-  }
-};
