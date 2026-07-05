@@ -1,0 +1,441 @@
+export default {
+  async fetch(request) {
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Secure Player</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.0/shaka-player.ui.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.0/controls.min.css"/>
+
+<style>
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+}
+
+html,body{
+width:100%;
+height:100%;
+background:#000;
+overflow:hidden;
+font-family:Arial,sans-serif;
+}
+
+video{
+position:absolute;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:#000;
+object-fit:cover;
+}
+
+.topbar{
+position:fixed;
+top:10px;
+right:10px;
+z-index:9999;
+display:flex;
+gap:8px;
+}
+
+select{
+background:rgba(0,0,0,.8);
+color:#fff;
+border:1px solid #555;
+padding:6px 10px;
+border-radius:8px;
+font-size:13px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+<select id="qualitySelect">
+<option value="-1">Quality: Auto</option>
+</select>
+
+<select id="audioSelect">
+<option>Audio</option>
+</select>
+</div>
+
+<video autoplay playsinline id="video"></video>
+
+<script>
+
+setInterval(()=>{
+try{
+console.clear();
+}catch(e){}
+},1);
+
+(async()=>{
+
+document.addEventListener("contextmenu",e=>e.preventDefault());
+document.addEventListener("selectstart",e=>e.preventDefault());
+document.addEventListener("dragstart",e=>e.preventDefault());
+
+const countryRes=await fetch("https://ipapi.co/json/");
+const countryData=await countryRes.json();
+
+if(countryData.country_code!=="IN"){
+
+document.body.innerHTML=`
+<div style="
+background:#000;
+color:#fff;
+width:100vw;
+height:100vh;
+display:flex;
+justify-content:center;
+align-items:center;
+flex-direction:column;
+font-family:Arial,sans-serif;
+">
+<h2>This stream is only available in India 🇮🇳</h2>
+<p>Your Location: ${countryData.country_name}</p>
+</div>
+`;
+
+return;
+}
+
+const params=new URLSearchParams(location.search);
+
+const channelId=params.get("id");
+
+if(!channelId){
+document.body.innerHTML="<h2 style='color:white'>Missing Channel ID</h2>";
+return;
+}
+
+const api=
+`https://nameless-glitter-13eb.database1806.workers.dev/?id=${channelId}`;
+
+const video=document.getElementById("video");
+
+const response=await fetch(api);
+const data=await response.json();
+
+shaka.polyfill.installAll();
+
+const player=new shaka.Player(video);
+
+const ui=new shaka.ui.Overlay(
+player,
+video.parentElement,
+video
+);
+
+const controls=ui.getControls();
+const config=controls.getConfig();
+
+config.controlPanelElements=[
+"play_pause",
+"time_and_duration",
+"spacer",
+"mute",
+"volume",
+"fullscreen"
+];
+
+config.addBigPlayButton=false;
+
+ui.configure(config);
+
+function base64urlToHex(str){
+
+let b64=str.replace(/-/g,"+").replace(/_/g,"/");
+
+while(b64.length%4){
+b64+="=";
+}
+
+const raw=atob(b64);
+
+let hex="";
+
+for(let i=0;i<raw.length;i++){
+hex+=raw.charCodeAt(i)
+.toString(16)
+.padStart(2,"0");
+}
+
+return hex;
+}
+
+const clearKeys={};
+
+if(Array.isArray(data.keys) && data.keys.length){
+
+data.keys.forEach(item=>{
+
+if(item.kid && item.key){
+
+clearKeys[
+base64urlToHex(item.kid)
+]=base64urlToHex(item.key);
+
+}
+
+});
+
+}else if(data.kid && data.key){
+
+clearKeys[
+base64urlToHex(data.kid)
+]=base64urlToHex(data.key);
+
+}
+
+player.configure({
+drm:{
+clearKeys:clearKeys
+}
+});
+
+const finalApi=
+"https://nameless-glitter-13eb.database1806.workers.dev/api2?id="+
+channelId+
+"&url="+
+encodeURIComponent(data.mpd_url);
+
+const finalResponse=await fetch(finalApi);
+const finalData=await finalResponse.json();
+
+const manifestUri=finalData.final_url;
+const token=finalData.cookie || "";
+
+player.getNetworkingEngine()
+.registerRequestFilter((type,request)=>{
+
+if(
+type!==shaka.net.NetworkingEngine.RequestType.MANIFEST &&
+type!==shaka.net.NetworkingEngine.RequestType.SEGMENT
+){
+return;
+}
+
+for(let i=0;i<request.uris.length;i++){
+
+let uri=request.uris[i];
+
+if(uri.startsWith("data:")){
+continue;
+}
+
+if(uri.includes("__hdnea__=")){
+continue;
+}
+
+if(uri.endsWith("?")){
+request.uris[i]=uri+token;
+}
+else if(uri.includes("?")){
+request.uris[i]=uri+"&"+token;
+}
+else{
+request.uris[i]=uri+"?"+token;
+}
+
+}
+
+});
+
+player.addEventListener("error",e=>{
+console.error("SHAKA ERROR:",e.detail);
+});
+
+await player.load(manifestUri);
+// ===== QUALITY SELECTOR =====
+
+const qualitySelect=document.getElementById("qualitySelect");
+
+const tracks=player.getVariantTracks();
+
+const seen=new Set();
+
+tracks.forEach(track=>{
+
+const label=track.height
+?track.height+"p"
+:(Math.round(track.bandwidth/1000)+"kbps");
+
+if(!seen.has(label)){
+
+seen.add(label);
+
+const opt=document.createElement("option");
+
+opt.value=track.id;
+
+opt.text=label;
+
+qualitySelect.appendChild(opt);
+
+}
+
+});
+
+qualitySelect.addEventListener("change",function(){
+
+if(this.value==="-1"){
+
+player.configure({
+abr:{
+enabled:true
+}
+});
+
+}else{
+
+player.configure({
+abr:{
+enabled:false
+}
+});
+
+const chosen=player
+.getVariantTracks()
+.find(t=>String(t.id)===this.value);
+
+if(chosen){
+
+player.selectVariantTrack(
+chosen,
+true
+);
+
+}
+
+}
+
+});
+
+
+// ===== AUDIO LANGUAGE SELECTOR =====
+
+const audioSelect=document.getElementById("audioSelect");
+
+const audioTracks=
+player.getAudioLanguagesAndRoles();
+
+audioSelect.innerHTML="";
+
+const langMap={
+
+"hi":"Hindi",
+"en":"English",
+"ta":"Tamil",
+"te":"Telugu",
+"ml":"Malayalam",
+"kn":"Kannada",
+"bn":"Bengali",
+"mr":"Marathi",
+"gu":"Gujarati",
+"pa":"Punjabi",
+"or":"Odia",
+"as":"Assamese",
+"ur":"Urdu",
+
+"fr":"French",
+"de":"German",
+"es":"Spanish",
+"pt":"Portuguese",
+"ar":"Arabic",
+
+"zh":"Chinese",
+"ja":"Japanese",
+"ko":"Korean",
+
+"ru":"Russian",
+"it":"Italian",
+"tr":"Turkish",
+"nl":"Dutch",
+
+"pl":"Polish",
+"sv":"Swedish",
+"da":"Danish",
+"fi":"Finnish",
+"no":"Norwegian",
+
+"th":"Thai",
+"vi":"Vietnamese",
+"id":"Indonesian",
+"ms":"Malay",
+
+"fa":"Persian",
+"he":"Hebrew"
+
+};
+
+audioTracks.forEach((track,i)=>{
+
+const opt=document.createElement("option");
+
+opt.value=i;
+
+const code=
+(track.language||"")
+.toLowerCase()
+.split("-")[0];
+
+opt.text=
+langMap[code] ||
+track.language ||
+("Audio "+(i+1));
+
+audioSelect.appendChild(opt);
+
+});
+
+audioSelect.addEventListener("change",function(){
+
+const track=
+audioTracks[
+parseInt(this.value)
+];
+
+if(track){
+
+player.selectAudioLanguage(
+track.language,
+track.role
+);
+
+}
+
+});
+
+video.muted=true;
+
+try{
+await video.play();
+}catch(e){
+console.error(e);
+}
+
+})();
+</script>
+
+</body>
+</html>
+`;
+
+    return new Response(html,{
+      headers:{
+        "content-type":"text/html;charset=UTF-8"
+      }
+    });
+  }
+};
