@@ -6,21 +6,13 @@
 .blogger-dash-player,
 .blogger-dash-player *{box-sizing:border-box}
 
-.blogger-dash-player{margin:0 auto;max-width:1100px;padding:20px;background:#0d1117;color:#e6edf3;font-family:Arial,sans-serif}
+.blogger-dash-player{position:fixed;inset:0;z-index:999999;width:100vw;height:100vh;height:100dvh;max-width:none;margin:0;padding:0;background:#000;color:#fff;font-family:Arial,sans-serif}
 
-.blogger-dash-player h1{font-size:24px;margin:0 0 18px}
+.blogger-dash-player .card{width:100%;height:100%;margin:0;padding:0;background:#000;border:0}
 
-.blogger-dash-player .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:16px;margin-bottom:16px}
+.blogger-dash-player .shaka-video-container{width:100%;height:100%;background:#000}
 
-.blogger-dash-player .row{display:flex;gap:10px;flex-wrap:wrap}
-
-.blogger-dash-player button{background:#238636;color:#fff;border:0;border-radius:8px;padding:11px 16px;cursor:pointer}
-
-.blogger-dash-player button:hover{opacity:.9}
-
-.blogger-dash-player button.secondary{background:#30363d}
-
-.blogger-dash-player video{width:100%;max-height:650px;background:#000;border-radius:10px}
+.blogger-dash-player video{width:100%;height:100%;max-height:none;background:#000;object-fit:contain}
 
 .blogger-dash-player .shaka-volume-bar-container{width:48px!important;min-width:48px;flex:0 0 48px}
 .blogger-dash-player .shaka-volume-bar-container input{width:100%;min-width:0;flex:1;padding:0;background:transparent;border:0}
@@ -37,28 +29,15 @@
     .blogger-dash-player .shaka-volume-bar-container{width:32px!important;min-width:32px;flex-basis:32px}
 }
 
-.blogger-dash-player .status{padding:10px;border-radius:8px;background:#21262d;margin-top:10px}
-
-.blogger-dash-player .good{color:#3fb950}.blogger-dash-player .bad{color:#f85149}.blogger-dash-player .warn{color:#d29922}
-
-.blogger-dash-player .small{font-size:12px;color:#8b949e}
-
 </style>
 
 <div class="blogger-dash-player" id="bloggerDashPlayer">
-<h1>DASH + ClearKey DRM Multi-Language Player</h1>
-
-
-
 <div class="card">
 
     
 <div class="shaka-video-container" style="width:100%">
     <video class="player-video" playsinline></video>
 </div>
-
-
-    <div class="status player-status">Player not initialized.</div>
 
 </div>
 
@@ -79,17 +58,10 @@
 
 
 
-const CDN_WORKERS = [
-    "https://cdn.8virgia2w.workers.dev"
-    // Add more worker origins here, for example:
-    // "https://cdn-worker-2.example.workers.dev",
-];
-
-const DOWNLOAD_PROXIES = [
-    "https://proxy1.8virgia2w.workers.dev"
-    // Add more proxy origins here, for example:
-    // "https://proxy-2.example.workers.dev",
-];
+let CDN_WORKERS = [];
+let DOWNLOAD_PROXIES = [];
+let DRM_LICENSE_URL = "";
+const VIDEO_LIST_URL = "https://divine-haze-5acf.7newsi04m.workers.dev/videos";
 
 let cdnWorkerIndex = 0;
 let downloadProxyIndex = 0;
@@ -105,12 +77,6 @@ function nextDownloadProxy() {
     downloadProxyIndex++;
     return proxy;
 }
-
-
-
-const DRM_LICENSE_URL =
-
-    "https://divine-haze-5acf.7newsi04m.workers.dev/license";
 
 
 
@@ -135,9 +101,6 @@ let MPD_URL = "";
 
 
 
-const statusOutput =
-    document.querySelector("#bloggerDashPlayer .player-status");
-
 const playerRoot =
     document.getElementById("bloggerDashPlayer");
 
@@ -150,19 +113,91 @@ function drmLog() {
 
 
 function setStatus(text, type="") {
+    if (type === "bad") {
+        window.alert(text);
+    }
+}
 
+function validateHttpsUrlList(value, name) {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new Error(`Config must include at least one ${name} URL.`);
+    }
 
+    return value.map((entry, index) => {
+        if (typeof entry !== "string") {
+            throw new Error(`${name} URL at index ${index} must be a string.`);
+        }
 
-    statusOutput.textContent =
+        const url = new URL(entry);
+        if (url.protocol !== "https:") {
+            throw new Error(`${name} URLs must use HTTPS.`);
+        }
 
-        text;
+        return url.origin;
+    });
+}
 
+async function loadPlayerConfig() {
+    const configUrl =
+        new URLSearchParams(window.location.search).get("config") ||
+        "player-config.json";
+    const response = await fetch(configUrl);
+    if (!response.ok) {
+        throw new Error(`Could not load player config (${response.status}).`);
+    }
 
+    const config = await response.json();
+    CDN_WORKERS = validateHttpsUrlList(config.cdnWorkers, "cdnWorkers");
+    DOWNLOAD_PROXIES = validateHttpsUrlList(config.proxyUrls, "proxyUrls");
 
-    statusOutput.className =
+    if (typeof config.licenseUrl === "string" && config.licenseUrl.trim()) {
+        DRM_LICENSE_URL = validateHttpsUrl(config.licenseUrl, "licenseUrl");
+    }
+}
 
-        "status " + type;
+function validateHttpsUrl(value, name) {
+    let url;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`Config contains an invalid ${name} URL.`);
+    }
 
+    if (url.protocol !== "https:") {
+        throw new Error(`${name} must use HTTPS.`);
+    }
+
+    return url.href;
+}
+
+async function getVideoById(videoId) {
+    const response = await fetch(VIDEO_LIST_URL);
+    if (!response.ok) {
+        throw new Error(`Could not load video list (${response.status}).`);
+    }
+
+    const data = await response.json();
+    if (!data.success || !Array.isArray(data.videos)) {
+        throw new Error("Video list response has an invalid format.");
+    }
+
+    const entry = data.videos.find(video => video.video_id === videoId);
+    if (!entry) {
+        throw new Error(`No video found for id "${videoId}".`);
+    }
+
+    if (typeof entry.mpd_url !== "string" || !entry.mpd_url.trim()) {
+        throw new Error(`The video "${videoId}" does not have an MPD URL.`);
+    }
+
+    if (typeof entry.license_url !== "string" || !entry.license_url.trim()) {
+        throw new Error(`The video "${videoId}" does not have a license URL.`);
+    }
+
+    return {
+        mpdUrl: validateHttpsUrl(entry.mpd_url.trim(), "mpd_url"),
+        licenseUrl: validateHttpsUrl(entry.license_url.trim(), "license_url")
+    };
 }
 
     /* =========================================================
@@ -2699,18 +2734,30 @@ async function init() {
 
 
 
-const initialMpdUrl =
-    new URLSearchParams(window.location.search).get("url");
+const queryParams = new URLSearchParams(window.location.search);
+const requestedVideoId = queryParams.get("id");
+const initialMpdUrl = queryParams.get("url");
 
-if (initialMpdUrl) {
-    init().then(() => loadVideo(initialMpdUrl)).catch(error => {
-        setStatus("Player initialization failed.", "bad");
+loadPlayerConfig()
+    .then(async () => {
+        let mpdUrl = initialMpdUrl;
+
+        if (requestedVideoId) {
+            const videoEntry = await getVideoById(requestedVideoId);
+            DRM_LICENSE_URL = videoEntry.licenseUrl;
+            mpdUrl = videoEntry.mpdUrl;
+        } else if (!DRM_LICENSE_URL) {
+            throw new Error("Add ?id=VIDEO_ID or ?url=MPD_URL to the page URL.");
+        }
+
+        await init();
+        if (mpdUrl) {
+            await loadVideo(mpdUrl);
+        }
+    })
+    .catch(error => {
+        window.alert(`Player could not start: ${error.message}`);
     });
-} else {
-init().catch(error => {
-setStatus("Player initialization failed.", "bad");
-});
-}
 
 
 
