@@ -1,0 +1,9 @@
+{
+  "cdnWorkers": [
+    "https://cdn.8virgia2w.workers.dev"
+  ],
+  "proxyUrls": [
+    "https://proxy1.8virgia2w.workers.dev"
+  ],
+  "licenseUrl": "https://divine-haze-5acf.7newsi04m.workers.dev/license"
+}
