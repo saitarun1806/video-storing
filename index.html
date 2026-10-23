@@ -1,582 +1,2719 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stream Player</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/controls.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.ui.js"></script>
+
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; }
-  .video-wrap { width: 100%; height: 100%; position: relative; }
-  video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
 
-  #play-overlay {
-    position: absolute; inset: 0; z-index: 25;
-    display: flex; align-items: center; justify-content: center; cursor: pointer;
-  }
-  #play-overlay.hidden { display: none; }
-  .play-btn-circle {
-    width: 72px; height: 72px; border-radius: 50%;
-    background: rgba(108,99,255,0.85);
-    display: flex; align-items: center; justify-content: center;
-    transition: transform 0.15s, background 0.15s;
-    box-shadow: 0 0 0 12px rgba(108,99,255,0.18);
-  }
-  #play-overlay:hover .play-btn-circle { background: #6c63ff; transform: scale(1.08); }
-  .play-icon {
-    width: 0; height: 0; border-style: solid;
-    border-width: 14px 0 14px 26px;
-    border-color: transparent transparent transparent #fff;
-    margin-left: 6px;
-  }
+.blogger-dash-player,
+.blogger-dash-player *{box-sizing:border-box}
 
-  #buf-overlay {
-    position: absolute; inset: 0; z-index: 30;
-    display: none; flex-direction: column;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.85); gap: 16px;
-  }
-  #buf-overlay.visible { display: flex; }
-  .buf-spinner {
-    width: 46px; height: 46px;
-    border: 3px solid rgba(108,99,255,0.2);
-    border-top-color: #6c63ff; border-radius: 50%;
-    animation: spin 0.85s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .buf-label {
-    color: #e8e8f0; font-size: 13px; font-weight: 500;
-    font-family: 'Segoe UI', system-ui, sans-serif; letter-spacing: 0.3px;
-  }
-  .buf-bar-wrap { width: 180px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
-  .buf-bar { height: 100%; width: 0%; background: #6c63ff; border-radius: 4px; transition: width 0.3s ease; }
-  .buf-sublabel { color: #6b6b8a; font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif; }
+.blogger-dash-player{margin:0 auto;max-width:1100px;padding:20px;background:#0d1117;color:#e6edf3;font-family:Arial,sans-serif}
 
-  #err-overlay {
-    position: absolute; inset: 0; z-index: 35;
-    display: none; flex-direction: column;
-    align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.9); gap: 12px;
-  }
-  #err-overlay.visible { display: flex; }
-  .err-icon { font-size: 40px; }
-  .err-msg {
-    color: #f87171; font-size: 13px; font-weight: 500;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    text-align: center; max-width: 280px; line-height: 1.5;
-  }
-  .err-detail {
-    color: #6b6b8a; font-size: 11px;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    text-align: center; max-width: 280px; line-height: 1.5;
-  }
-  .err-retry {
-    background: #6c63ff; color: #fff; border: none;
-    border-radius: 7px; padding: 8px 20px; font-size: 13px;
-    font-weight: 600; cursor: pointer; font-family: 'Segoe UI', system-ui, sans-serif;
-  }
-  .err-retry:hover { background: #5a52d5; }
+.blogger-dash-player h1{font-size:24px;margin:0 0 18px}
 
-  .track-panel-overlay {
-    position: absolute; top: 10px; right: 10px; z-index: 20;
-    display: flex; flex-direction: column; gap: 6px; align-items: flex-end;
-  }
-  .track-toggle-row { display: flex; gap: 6px; }
-  .tp-toggle-btn {
-    background: rgba(10,10,15,0.82); border: 1px solid rgba(108,99,255,0.5);
-    color: #e8e8f0; border-radius: 7px; font-size: 11px; font-weight: 600;
-    padding: 5px 10px; cursor: pointer; backdrop-filter: blur(6px);
-    transition: background 0.15s, border-color 0.15s;
-    display: flex; align-items: center; gap: 5px;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-  }
-  .tp-toggle-btn:hover { background: rgba(108,99,255,0.3); border-color: #6c63ff; }
-  .tp-dot { width: 5px; height: 5px; border-radius: 50%; background: #a78bfa; display: none; }
-  .tp-dropdown {
-    background: rgba(13,13,20,0.97); border: 1px solid #1f1f2e;
-    border-radius: 10px; padding: 8px; display: none;
-    flex-direction: column; gap: 4px; min-width: 160px;
-    backdrop-filter: blur(8px); box-shadow: 0 4px 24px rgba(0,0,0,0.6);
-  }
-  .tp-dropdown.open { display: flex; }
-  .tp-dropdown-title {
-    font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #6b6b8a;
-    text-transform: uppercase; padding: 2px 4px 6px;
-    border-bottom: 1px solid #1f1f2e; margin-bottom: 2px;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-  }
-  .tp-item {
-    background: transparent; border: none; color: #6b6b8a;
-    font-size: 12px; padding: 6px 8px; border-radius: 6px;
-    cursor: pointer; text-align: left; display: flex; align-items: center;
-    gap: 7px; transition: background 0.12s, color 0.12s; white-space: nowrap;
-    font-family: 'Segoe UI', system-ui, sans-serif;
-  }
-  .tp-item:hover { background: rgba(108,99,255,0.18); color: #e8e8f0; }
-  .tp-item.active { background: #6c63ff; color: #fff; }
-  .tp-item .tp-badge {
-    font-size: 9px; background: rgba(255,255,255,0.15);
-    border-radius: 3px; padding: 1px 5px; font-weight: 600; margin-left: auto;
-  }
-  .tp-item.active .tp-badge { background: rgba(255,255,255,0.25); }
+.blogger-dash-player .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:16px;margin-bottom:16px}
+
+.blogger-dash-player .row{display:flex;gap:10px;flex-wrap:wrap}
+
+.blogger-dash-player button{background:#238636;color:#fff;border:0;border-radius:8px;padding:11px 16px;cursor:pointer}
+
+.blogger-dash-player button:hover{opacity:.9}
+
+.blogger-dash-player button.secondary{background:#30363d}
+
+.blogger-dash-player video{width:100%;max-height:650px;background:#000;border-radius:10px}
+
+.blogger-dash-player .shaka-volume-bar-container{width:48px!important;min-width:48px;flex:0 0 48px}
+.blogger-dash-player .shaka-volume-bar-container input{width:100%;min-width:0;flex:1;padding:0;background:transparent;border:0}
+
+.blogger-dash-player .shaka-controls-button-panel .shaka-language-button.shaka-hidden,
+.blogger-dash-player .shaka-controls-button-panel .shaka-resolution-button.shaka-hidden{
+    display:inline-flex!important;
+    opacity:.45;
+    pointer-events:none;
+}
+
+@media (max-width:480px){
+    .blogger-dash-player .shaka-current-time{display:none!important}
+    .blogger-dash-player .shaka-volume-bar-container{width:32px!important;min-width:32px;flex-basis:32px}
+}
+
+.blogger-dash-player .status{padding:10px;border-radius:8px;background:#21262d;margin-top:10px}
+
+.blogger-dash-player .good{color:#3fb950}.blogger-dash-player .bad{color:#f85149}.blogger-dash-player .warn{color:#d29922}
+
+.blogger-dash-player .small{font-size:12px;color:#8b949e}
+
 </style>
-</head>
-<body>
-<div class="video-wrap">
-  <video id="video" playsinline preload="auto"></video>
 
-  <div id="play-overlay">
-    <div class="play-btn-circle"><div class="play-icon"></div></div>
-  </div>
+<div class="blogger-dash-player" id="bloggerDashPlayer">
+<h1>DASH + ClearKey DRM Multi-Language Player</h1>
 
-  <div id="buf-overlay">
-    <div class="buf-spinner"></div>
-    <div class="buf-label" id="buf-label">Loading… 0%</div>
-    <div class="buf-bar-wrap"><div class="buf-bar" id="buf-bar"></div></div>
-    <div class="buf-sublabel" id="buf-sublabel"></div>
-  </div>
 
-  <div id="err-overlay">
-    <div class="err-icon">⚠️</div>
-    <div class="err-msg" id="err-msg">Failed to load stream.</div>
-    <div class="err-detail" id="err-detail"></div>
-    <button class="err-retry" onclick="retryLoad()">Retry</button>
-  </div>
 
-  <div class="track-panel-overlay">
-    <div class="track-toggle-row">
-      <button class="tp-toggle-btn" onclick="toggleDropdown('video-dd','audio-dd')">
-        🎬 Video <span class="tp-dot" id="video-dot"></span>
-      </button>
-      <button class="tp-toggle-btn" onclick="toggleDropdown('audio-dd','video-dd')">
-        🔊 Audio <span class="tp-dot" id="audio-dot"></span>
-      </button>
-    </div>
-    <div class="tp-dropdown" id="video-dd">
-      <div class="tp-dropdown-title">Video Quality</div>
-      <div id="quality-list"><span style="color:#6b6b8a;font-size:12px;padding:4px 8px">Loading…</span></div>
-    </div>
-    <div class="tp-dropdown" id="audio-dd">
-      <div class="tp-dropdown-title">Audio Language</div>
-      <div id="audio-list"><span style="color:#6b6b8a;font-size:12px;padding:4px 8px">Loading…</span></div>
-    </div>
-  </div>
+<div class="card">
+
+    
+<div class="shaka-video-container" style="width:100%">
+    <video class="player-video" playsinline></video>
 </div>
 
+
+    <div class="status player-status">Player not initialized.</div>
+
+</div>
+
+
+
 <script>
-const video       = document.getElementById('video');
-const playOverlay = document.getElementById('play-overlay');
-const bufOverlay  = document.getElementById('buf-overlay');
-const bufBar      = document.getElementById('buf-bar');
-const bufLabel    = document.getElementById('buf-label');
-const bufSublabel = document.getElementById('buf-sublabel');
-const errOverlay  = document.getElementById('err-overlay');
-const errMsg      = document.getElementById('err-msg');
-const errDetail   = document.getElementById('err-detail');
 
-const BUFFER_TARGET     = 10;
-const BUFFER_TIMEOUT_MS = 180000;
-const READY_STATE_TIMEOUT_MS = 15000; // max wait for readyState >= 2
+(() => {
+"use strict";
 
-let player = null, currentUrl = null, bufferCheckRaf = null;
-let segmentErrorCount = 0;
 
-shaka.polyfill.installAll();
 
-function toggleDropdown(openId, closeId) {
-  document.getElementById(closeId).classList.remove('open');
-  document.getElementById(openId).classList.toggle('open');
+/* =========================================================
+
+   CONFIG
+
+   ========================================================= */
+
+
+
+const CDN_WORKERS = [
+    "https://cdn.8virgia2w.workers.dev"
+    // Add more worker origins here, for example:
+    // "https://cdn-worker-2.example.workers.dev",
+];
+
+const DOWNLOAD_PROXIES = [
+    "https://proxy1.8virgia2w.workers.dev"
+    // Add more proxy origins here, for example:
+    // "https://proxy-2.example.workers.dev",
+];
+
+let cdnWorkerIndex = 0;
+let downloadProxyIndex = 0;
+
+function nextCDNWorker() {
+    const worker = CDN_WORKERS[cdnWorkerIndex % CDN_WORKERS.length];
+    cdnWorkerIndex++;
+    return worker;
 }
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.track-panel-overlay')) {
-    document.getElementById('video-dd').classList.remove('open');
-    document.getElementById('audio-dd').classList.remove('open');
-  }
+
+function nextDownloadProxy() {
+    const proxy = DOWNLOAD_PROXIES[downloadProxyIndex % DOWNLOAD_PROXIES.length];
+    downloadProxyIndex++;
+    return proxy;
+}
+
+
+
+const DRM_LICENSE_URL =
+
+    "https://divine-haze-5acf.7newsi04m.workers.dev/license";
+
+
+
+const SHAKA_VERSION = "4.7.11";
+
+
+
+let player = null;
+
+let video = null;
+
+let ui = null;
+
+
+let MPD_URL = "";
+
+/* =========================================================
+
+   UI
+
+   ========================================================= */
+
+
+
+const statusOutput =
+    document.querySelector("#bloggerDashPlayer .player-status");
+
+const playerRoot =
+    document.getElementById("bloggerDashPlayer");
+
+function log() {
+}
+
+function drmLog() {
+}
+
+
+
+function setStatus(text, type="") {
+
+
+
+    statusOutput.textContent =
+
+        text;
+
+
+
+    statusOutput.className =
+
+        "status " + type;
+
+}
+
+    /* =========================================================
+
+   BYTE / BASE64 UTILITIES
+
+   ========================================================= */
+
+
+
+function bytesToHex(bytes) {
+
+
+
+    if (!bytes)
+
+        return "";
+
+
+
+    return Array.from(
+
+        bytes,
+
+        b =>
+
+            b.toString(16)
+
+             .padStart(2, "0")
+
+    ).join("");
+
+}
+
+
+
+
+
+function base64UrlToHex(value) {
+
+
+
+    try {
+
+
+
+        if (!value)
+
+            return null;
+
+
+
+        let normalized =
+
+            value
+
+                .replace(/-/g, "+")
+
+                .replace(/\_/g, "/");
+
+
+
+        while (
+
+            normalized.length % 4
+
+        ) {
+
+            normalized += "=";
+
+        }
+
+
+
+        const binary =
+
+            atob(normalized);
+
+
+
+        const bytes =
+
+            new Uint8Array(
+
+                binary.length
+
+            );
+
+
+
+        for (
+
+            let i = 0;
+
+            i < binary.length;
+
+            i++
+
+        ) {
+
+            bytes[i] =
+
+                binary.charCodeAt(i);
+
+        }
+
+
+
+        return bytesToHex(bytes);
+
+
+
+    } catch (error) {
+
+
+
+        return null;
+
+    }
+
+}
+
+
+
+
+
+function parseJsonBytes(data) {
+
+
+
+    try {
+
+
+
+        if (!data)
+
+            return null;
+
+
+
+        const text =
+
+            new TextDecoder()
+
+                .decode(data);
+
+
+
+        return JSON.parse(text);
+
+
+
+    } catch {
+
+
+
+        return null;
+
+    }
+
+}
+
+
+
+
+
+/* =========================================================
+
+   DRM REQUEST KID
+
+   ========================================================= */
+
+
+
+function extractRequestedKids(body) {
+
+
+
+    try {
+
+
+
+        if (!body)
+
+            return [];
+
+
+
+        const text =
+
+            new TextDecoder()
+
+                .decode(body);
+
+
+
+        const obj =
+
+            JSON.parse(text);
+
+
+
+        return Array.isArray(obj.kids)
+
+            ? obj.kids
+
+            : [];
+
+
+
+    } catch {
+
+
+
+        return [];
+
+    }
+
+}
+
+
+
+
+
+/* =========================================================
+
+   DRM DIAGNOSTICS
+
+   ========================================================= */
+
+
+
+function installDrmDiagnostics() {
+
+
+
+    const net =
+
+        player.getNetworkingEngine();
+
+
+
+    if (!net) {
+
+
+
+        drmLog(
+
+            "[DRM DIAG]",
+
+            "NetworkingEngine unavailable"
+
+        );
+
+
+
+        return;
+
+    }
+
+
+
+
+
+    /* -----------------------------------------------------
+       LICENSE REQUEST
+       ----------------------------------------------------- */
+
+
+
+    net.registerRequestFilter(
+
+        (type, request) => {
+
+
+
+            if (
+
+                type !==
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.LICENSE
+
+            ) {
+
+                return;
+
+            }
+
+
+
+            const kids =
+
+                extractRequestedKids(
+
+                    request.body
+
+                );
+
+
+
+            const diagnostic =
+
+                {
+
+                    url:
+
+                        request.uris
+
+                            ? request.uris[0]
+
+                            : "",
+
+
+
+                    method:
+
+                        request.method || "POST",
+
+
+
+                    bodyBytes:
+
+                        request.body
+
+                            ? request.body.byteLength
+
+                            : 0,
+
+
+
+                    requestedKids:
+
+                        kids.map(kid => ({
+
+                            base64url: kid,
+
+                            hex:
+
+                                base64UrlToHex(
+
+                                    kid
+
+                                )
+
+                        }))
+
+                };
+
+
+
+            drmLog(
+
+                "[DRM LICENSE REQUEST]",
+
+                diagnostic
+
+            );
+
+
+
+
+
+            /* Do NOT modify the license request. */
+
+        }
+
+    );
+
+
+
+
+
+    /* -----------------------------------------------------
+       LICENSE RESPONSE
+       ----------------------------------------------------- */
+
+
+
+    net.registerResponseFilter(
+
+        (type, response) => {
+
+
+
+            if (
+
+                type !==
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.LICENSE
+
+            ) {
+
+                return;
+
+            }
+
+
+
+            const parsed =
+
+                parseJsonBytes(
+
+                    response.data
+
+                );
+
+
+
+            if (!parsed) {
+
+
+
+                drmLog(
+
+                    "[DRM LICENSE RESPONSE - INVALID JSON]",
+
+                    {
+
+                        status:
+
+                            response.status,
+
+
+
+                        bytes:
+
+                            response.data
+
+                                ? response.data
+
+                                    .byteLength
+
+                                : 0
+
+                    }
+
+                );
+
+
+
+                return;
+
+            }
+
+
+
+
+
+            const returned =
+
+                Array.isArray(parsed.keys)
+
+                    ? parsed.keys.map(k => ({
+
+                        kid:
+
+                            k.kid,
+
+
+
+                        kidHex:
+
+                            base64UrlToHex(
+
+                                k.kid
+
+                            ),
+
+
+
+                        kty:
+
+                            k.kty,
+
+
+
+                        hasKey:
+
+                            !!k.k
+
+                    }))
+
+                    : [];
+
+
+
+
+
+            drmLog(
+
+                "[DRM LICENSE RESPONSE]",
+
+                {
+
+                    status:
+
+                        response.status,
+
+
+
+                    contentType:
+
+                        response.headers
+
+                            ? response.headers[
+
+                                "content-type"
+
+                            ]
+
+                            : undefined,
+
+
+
+                    type:
+
+                        parsed.type,
+
+
+
+                    keyCount:
+
+                        returned.length,
+
+
+
+                    keys:
+
+                        returned
+
+                }
+
+            );
+
+
+
+
+
+            const valid =
+
+                response.status >= 200 &&
+
+                response.status < 300 &&
+
+                Array.isArray(parsed.keys) &&
+
+                parsed.keys.length > 0 &&
+
+                parsed.keys.every(
+
+                    k =>
+
+                        !!k.kid &&
+
+                        !!k.k
+
+                );
+
+
+
+
+
+            drmLog(
+
+                "[DRM RESPONSE CHECK]",
+
+                {
+
+                    httpOK:
+
+                        response.status >= 200 &&
+
+                        response.status < 300,
+
+
+
+                    hasKeysArray:
+
+                        Array.isArray(
+
+                            parsed.keys
+
+                        ),
+
+
+
+                    keyCount:
+
+                        Array.isArray(
+
+                            parsed.keys
+
+                        )
+
+                            ? parsed.keys.length
+
+                            : 0,
+
+
+
+                    allKeysHaveKid:
+
+                        returned.every(
+
+                            x => !!x.kid
+
+                        ),
+
+
+
+                    allKeysHaveK:
+
+                        returned.every(
+
+                            x => x.hasKey
+
+                        ),
+
+
+
+                    validClearKeyResponse:
+
+                        valid
+
+                }
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    /* -----------------------------------------------------
+       SHAKA ERROR
+       ----------------------------------------------------- */
+
+
+
+    player.addEventListener(
+
+        "error",
+
+        event => {
+
+
+
+            const error =
+
+                event.detail;
+
+
+
+            log(
+
+                "[SHAKA ERROR]",
+
+                error
+
+            );
+
+
+
+            if (
+
+                error &&
+
+                error.category ===
+
+                shaka.util.Error.Category.DRM
+
+            ) {
+
+
+
+                drmLog(
+
+                    "[DRM SHAKA ERROR]",
+
+                    {
+
+                        code:
+
+                            error.code,
+
+
+
+                        category:
+
+                            error.category,
+
+
+
+                        severity:
+
+                            error.severity,
+
+
+
+                        data:
+
+                            error.data
+
+                    }
+
+                );
+
+            }
+
+        }
+
+    );
+
+
+
+
+
+    /* -----------------------------------------------------
+       DRM SESSION EVENTS
+       ----------------------------------------------------- */
+
+
+
+    player.addEventListener(
+
+        "drmsessionupdate",
+
+        event => {
+
+
+
+            drmLog(
+
+                "[DRM SESSION UPDATE]",
+
+                event
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    player.addEventListener(
+
+        "drmsessionerror",
+
+        event => {
+
+
+
+            drmLog(
+
+                "[DRM SESSION ERROR]",
+
+                event
+
+            );
+
+        }
+
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   KEY SYSTEM / EME EVENTS
+
+   ========================================================= */
+
+
+
+function installVideoDiagnostics() {
+
+
+
+    video.addEventListener(
+
+        "encrypted",
+
+        event => {
+
+
+
+            log(
+
+                "[EME encrypted EVENT]",
+
+                {
+
+                    initDataType:
+
+                        event.initDataType,
+
+
+
+                    initDataBytes:
+
+                        event.initData
+
+                            ? event.initData.byteLength
+
+                            : 0
+
+                }
+
+            );
+
+
+
+            drmLog(
+
+                "[EME ENCRYPTED]",
+
+                {
+
+                    initDataType:
+
+                        event.initDataType,
+
+
+
+                    initDataBytes:
+
+                        event.initData
+
+                            ? event.initData.byteLength
+
+                            : 0
+
+                }
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    video.addEventListener(
+
+        "waiting",
+
+        () => {
+
+
+
+            log(
+
+                "[VIDEO] waiting / buffering"
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    video.addEventListener(
+
+        "playing",
+
+        () => {
+
+
+
+            log(
+
+                "[VIDEO] PLAYING"
+
+            );
+
+
+
+            setStatus(
+
+                "Video is playing",
+
+                "good"
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    video.addEventListener(
+
+        "pause",
+
+        () => {
+
+
+
+            log(
+
+                "[VIDEO] paused"
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    video.addEventListener(
+
+        "canplay",
+
+        () => {
+
+
+
+            log(
+
+                "[VIDEO] canplay"
+
+            );
+
+        }
+
+    );
+
+
+
+
+
+    video.addEventListener(
+
+        "error",
+
+        () => {
+
+
+
+            log(
+
+                "[VIDEO ERROR]",
+
+                video.error
+
+            );
+
+
+
+            setStatus(
+
+                "HTML5 video error",
+
+                "bad"
+
+            );
+
+        }
+
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   URL HELPERS
+
+   ========================================================= */
+
+
+
+function isCDNResolverURL(uri) {
+    try {
+        const origin = new URL(uri).origin;
+        return CDN_WORKERS.some(worker => new URL(worker).origin === origin);
+    } catch {
+        return false;
+    }
+}
+
+
+
+
+
+function isProxyURL(uri) {
+    try {
+        const origin = new URL(uri).origin;
+        return DOWNLOAD_PROXIES.some(proxy => new URL(proxy).origin === origin);
+    } catch {
+        return false;
+    }
+}
+
+
+
+
+
+function isDiscordCDNURL(uri) {
+
+
+
+    try {
+
+
+
+        const host =
+
+            new URL(uri).hostname;
+
+
+
+        return (
+
+            host === "cdn.discordapp.com" ||
+
+            host === "media.discordapp.net"
+
+        );
+
+
+
+    } catch {
+
+
+
+        return false;
+
+    }
+
+}
+
+
+
+
+
+/* =========================================================
+
+   RESOLVE CDN URL
+
+   ========================================================= */
+
+
+
+async function resolveDiscordUrl(
+
+    resolverUrl
+
+) {
+
+
+
+    log(
+
+        "[RESOLVING CDN]",
+
+        resolverUrl
+
+    );
+
+
+
+    const originalUrl = new URL(resolverUrl);
+    const workerUrl = new URL(nextCDNWorker());
+    const workerPath = workerUrl.pathname.replace(/\/+$/, "");
+    const requestUrl = new URL(
+        `${workerPath}${originalUrl.pathname}${originalUrl.search}`,
+        workerUrl.origin
+    );
+    const response = await fetch(requestUrl, { method: "GET" });
+
+
+
+    if (!response.ok) {
+
+
+
+        throw new Error(
+
+            "CDN resolver failed: " +
+
+            response.status
+
+        );
+
+    }
+
+
+
+    const data =
+
+        await response.json();
+
+
+
+    log(
+
+        "[CDN RESOLVED]",
+
+        data
+
+    );
+
+
+
+    if (!data.url) {
+
+
+
+        throw new Error(
+
+            "CDN resolver did not return url"
+
+        );
+
+    }
+
+
+
+    return data.url;
+
+}
+
+
+
+
+
+/* =========================================================
+
+   DISCORD -> PROXY
+
+   ========================================================= */
+
+
+
+function makeProxyUrl(
+
+    discordUrl
+
+) {
+
+    return (
+        nextDownloadProxy().replace(/\/+$/, "") +
+        "/?url=" +
+        encodeURIComponent(discordUrl)
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   TRANSFORM MEDIA URL
+
+   ========================================================= */
+
+
+
+async function transformRequestURL(
+
+    uri
+
+) {
+
+
+
+    if (
+
+        isCDNResolverURL(uri)
+
+    ) {
+
+
+
+        const discordUrl =
+
+            await resolveDiscordUrl(
+
+                uri
+
+            );
+
+
+
+        const proxyUrl =
+
+            makeProxyUrl(
+
+                discordUrl
+
+            );
+
+
+
+        log(
+
+            "[CDN -> DISCORD -> PROXY]",
+
+            uri,
+
+            "=>",
+
+            proxyUrl
+
+        );
+
+
+
+        return proxyUrl;
+
+    }
+
+
+
+
+
+    if (
+
+        isDiscordCDNURL(uri)
+
+    ) {
+
+
+
+        const proxyUrl =
+
+            makeProxyUrl(
+
+                uri
+
+            );
+
+
+
+        log(
+
+            "[DISCORD -> PROXY]",
+
+            uri,
+
+            "=>",
+
+            proxyUrl
+
+        );
+
+
+
+        return proxyUrl;
+
+    }
+
+
+
+
+
+    if (
+
+        isProxyURL(uri)
+
+    ) {
+
+
+
+        return uri;
+
+    }
+
+
+
+
+
+    return uri;
+
+}
+
+
+
+
+
+/* =========================================================
+
+   SHAKA NETWORKING
+
+   ========================================================= */
+
+
+
+function installRequestFilter() {
+
+
+
+    const net =
+
+        player.getNetworkingEngine();
+
+
+
+
+
+    net.registerRequestFilter(
+
+        async (type, request) => {
+
+
+
+            /* ---------------------------------------------
+               LICENSE REQUEST
+               --------------------------------------------- */
+
+
+
+            if (
+
+                type ===
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.LICENSE
+
+            ) {
+
+
+
+                log(
+
+                    "[DRM LICENSE REQUEST]",
+
+                    {
+
+                        url:
+
+                            request.uris[0],
+
+
+
+                        method:
+
+                            request.method || "POST",
+
+
+
+                        bodyBytes:
+
+                            request.body
+
+                                ? request.body.byteLength
+
+                                : 0
+
+                    }
+
+                );
+
+
+
+                /*
+                 * CRITICAL:
+                 * LICENSE goes DIRECTLY to DRM worker.
+                 * Never send it through Discord proxy.
+                 */
+
+
+
+                return;
+
+            }
+
+
+
+
+
+            /* ---------------------------------------------
+               MEDIA / MANIFEST
+               --------------------------------------------- */
+
+
+
+            if (
+
+                type ===
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.SEGMENT ||
+
+                type ===
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.MANIFEST
+
+            ) {
+
+
+
+                const original =
+
+                    request.uris[0];
+
+
+
+                const transformed =
+
+                    await transformRequestURL(
+
+                        original
+
+                    );
+
+
+
+                if (
+
+                    transformed !== original
+
+                ) {
+
+
+
+                    request.uris = [
+
+                        transformed
+
+                    ];
+
+                }
+
+
+
+                return;
+
+            }
+
+
+
+
+
+            /* ---------------------------------------------
+               OTHER REQUESTS
+               --------------------------------------------- */
+
+
+
+            const original =
+
+                request.uris[0];
+
+
+
+            if (
+
+                isCDNResolverURL(
+
+                    original
+
+                ) ||
+
+                isDiscordCDNURL(
+
+                    original
+
+                )
+
+            ) {
+
+
+
+                request.uris = [
+
+                    await transformRequestURL(
+
+                        original
+
+                    )
+
+                ];
+
+            }
+
+        }
+
+    );
+
+
+
+
+
+    /* -----------------------------------------------------
+       RESPONSE FILTER
+       ----------------------------------------------------- */
+
+
+
+    net.registerResponseFilter(
+
+        (type, response) => {
+
+
+
+            if (
+
+                type ===
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.LICENSE
+
+            ) {
+
+
+
+                log(
+
+                    "[DRM LICENSE RESPONSE]",
+
+                    {
+
+                        status:
+
+                            response.status,
+
+
+
+                        uri:
+
+                            response.uri,
+
+
+
+                        contentType:
+
+                            response.headers
+
+                                ? response.headers[
+
+                                    "content-type"
+
+                                ]
+
+                                : undefined,
+
+
+
+                        bytes:
+
+                            response.data
+
+                                ? response.data.byteLength
+
+                                : 0
+
+                    }
+
+                );
+
+
+
+                return;
+
+            }
+
+
+
+
+
+            if (
+
+                type ===
+
+                shaka.net.NetworkingEngine
+
+                    .RequestType.SEGMENT
+
+            ) {
+
+
+
+                log(
+
+                    "[SEGMENT RESPONSE]",
+
+                    {
+
+                        status:
+
+                            response.status,
+
+
+
+                        uri:
+
+                            response.uri,
+
+
+
+                        contentType:
+
+                            response.headers
+
+                                ? response.headers[
+
+                                    "content-type"
+
+                                ]
+
+                                : undefined,
+
+
+
+                        bytes:
+
+                            response.data
+
+                                ? response.data.byteLength
+
+                                : 0
+
+                    }
+
+                );
+
+            }
+
+        }
+
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   DRM CONFIG
+
+   ========================================================= */
+
+
+
+function configureDRM() {
+
+    player.configure({
+
+        streaming: {
+            bufferingGoal: 30,
+            rebufferingGoal: 2,
+            bufferBehind: 30
+        },
+
+
+
+        drm: {
+
+
+
+            servers: {
+
+
+
+                "org.w3.clearkey":
+
+                    DRM_LICENSE_URL
+
+            },
+
+
+
+            retryParameters: {
+
+
+
+                maxAttempts: 3,
+
+
+
+                baseDelay: 500,
+
+
+
+                backoffFactor: 2,
+
+
+
+                fuzzFactor: 0.5,
+
+
+
+                timeout: 15000
+
+            },
+
+
+
+            preferredKeySystems: [
+
+                "org.w3.clearkey"
+
+            ],
+
+
+
+            delayLicenseRequestUntilPlayed:
+
+                false
+
+        }
+
+    });
+
+
+
+
+
+    drmLog(
+
+        "[DRM CONFIG]",
+
+        {
+
+            keySystem:
+
+                "org.w3.clearkey",
+
+
+
+            licenseUrl:
+
+                DRM_LICENSE_URL,
+
+
+
+        }
+
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   MPD PREFLIGHT
+
+   ========================================================= */
+
+
+
+async function preflightMPD(url) {
+
+
+
+    log(
+
+        "[MPD PREFLIGHT]",
+
+        url
+
+    );
+
+
+
+    try {
+
+
+
+        const response =
+
+            await fetch(url);
+
+
+
+        log(
+
+            "[MPD PREFLIGHT RESPONSE]",
+
+            {
+
+                status:
+
+                    response.status,
+
+
+
+                contentType:
+
+                    response.headers.get(
+
+                        "content-type"
+
+                    ),
+
+
+
+                bytes:
+
+                    response.headers.get(
+
+                        "content-length"
+
+                    )
+
+            }
+
+        );
+
+
+
+        if (!response.ok) {
+
+
+
+            throw new Error(
+
+                "MPD returned HTTP " +
+
+                response.status
+
+            );
+
+        }
+
+
+
+        const text =
+
+            await response.text();
+
+
+
+        log(
+
+            "[MPD SIZE]",
+
+            text.length
+
+        );
+
+
+
+
+
+        /* Show DRM-related MPD lines */
+
+
+
+        const drmLines =
+
+            text
+
+                .split(/\r?\n/)
+
+                .filter(line =>
+
+                    line.includes(
+
+                        "ContentProtection"
+
+                    ) ||
+
+                    line.includes(
+
+                        "default_KID"
+
+                    ) ||
+
+                    line.includes(
+
+                        "ClearKey"
+
+                    )
+
+                );
+
+
+
+        drmLog(
+
+            "[MPD DRM SIGNALING]",
+
+            drmLines
+
+        );
+
+
+
+
+
+        /* Check KID */
+
+
+
+        const kidMatches =
+
+            [
+
+                ...text.matchAll(
+
+                    /default_KID\s*=\s*"([^"]+)"/gi
+
+                )
+
+            ];
+
+
+
+        if (kidMatches.length) {
+
+
+
+            drmLog(
+
+                "[MPD DEFAULT KID]",
+
+                kidMatches.map(
+
+                    x => x[1]
+
+                )
+
+            );
+
+        }
+
+
+
+    } catch (error) {
+
+
+
+        log(
+
+            "[MPD PREFLIGHT ERROR]",
+
+            error
+
+        );
+
+    }
+
+}
+
+
+
+
+
+/* =========================================================
+
+   LOAD VIDEO
+
+   ========================================================= */
+
+
+
+async function loadVideo(
+
+    url
+
+) {
+
+
+
+    if (!player) {
+
+
+
+        log(
+
+            "[ERROR] Player not initialized"
+
+        );
+
+
+
+        return;
+
+    }
+
+
+
+
+
+    MPD_URL =
+
+        url.trim();
+
+
+
+
+
+    if (!MPD_URL) {
+        setStatus("Add an MPD URL as ?url=... in the page address.", "bad");
+        return;
+
+    }
+
+
+
+
+
+    setStatus(
+
+        "Loading MPD..."
+
+    );
+
+
+
+
+
+    log(
+
+        "===================================="
+
+    );
+
+
+
+    log(
+
+        "[LOAD VIDEO]",
+
+        MPD_URL
+
+    );
+
+
+
+
+
+    await preflightMPD(
+
+        MPD_URL
+
+    );
+
+
+
+
+
+    try {
+        await player.unload();
+    } catch (error) {
+        log("[UNLOAD ERROR]", error);
+    }
+
+
+
+
+
+    try {
+
+
+
+        await player.load(
+            MPD_URL
+        );
+
+        log(
+
+            "[MPD LOADED]"
+
+        );
+
+
+
+
+
+        const variants =
+
+            player.getVariantTracks();
+
+
+
+
+
+        log(
+
+            "[VARIANT TRACKS]",
+
+            variants
+
+        );
+
+
+
+
+
+        let keySystem =
+
+            "unknown";
+
+
+
+        try {
+
+
+
+            keySystem =
+
+                player.getKeySystem();
+
+
+
+        } catch {}
+
+
+
+
+
+        drmLog(
+
+            "[DRM KEY SYSTEM]",
+
+            keySystem || "not active yet"
+
+        );
+
+
+
+
+
+        setStatus(
+
+            "MPD loaded. Attempting playback...",
+
+            "good"
+
+        );
+
+
+
+
+
+        /*
+         * Do not wait indefinitely for automatic playback.
+         * The user can press Play.
+         */
+
+
+
+        try {
+
+
+
+            await video.play();
+
+
+
+            log(
+
+                "[VIDEO] play() succeeded"
+
+            );
+
+
+
+        } catch (error) {
+
+
+
+            log(
+
+                "[VIDEO] autoplay/play blocked",
+
+                error.message
+
+            );
+
+        }
+
+
+
+    } catch (error) {
+
+
+
+        setStatus(
+
+            "MPD/DRM load failed",
+
+            "bad"
+
+        );
+
+
+
+        log(
+
+            "[LOAD ERROR]",
+
+            error
+
+        );
+
+
+
+        drmLog(
+
+            "[LOAD ERROR]",
+
+            {
+
+                code:
+
+                    error.code,
+
+
+
+                category:
+
+                    error.category,
+
+
+
+                severity:
+
+                    error.severity,
+
+
+
+                data:
+
+                    error.data
+
+            }
+
+        );
+
+    }
+
+}
+
+
+
+
+
+/* =========================================================
+
+   DRM INFO
+
+   ========================================================= */
+
+
+
+function showDrmInfo() {
+
+
+
+    let keySystem =
+
+        "unknown";
+
+
+
+    try {
+
+
+
+        keySystem =
+
+            player
+
+                ? player.getKeySystem()
+
+                : "player not initialized";
+
+
+
+    } catch (error) {
+
+
+
+        keySystem =
+
+            "not active yet";
+
+    }
+
+
+
+
+
+    const info = {
+
+
+
+        licenseUrl:
+
+            DRM_LICENSE_URL,
+
+
+
+        mpd:
+
+            MPD_URL,
+
+
+
+        shaka:
+
+            SHAKA_VERSION,
+
+
+
+        keySystem:
+
+            keySystem,
+
+
+
+        browser:
+
+            navigator.userAgent,
+
+
+
+        encryptedMedia:
+
+            !!window.MediaKeys,
+
+
+
+        clearkey:
+
+            "org.w3.clearkey"
+
+    };
+
+
+
+
+
+    drmLog(
+
+        "============== DRM INFO ==============",
+
+        info
+
+    );
+
+}
+
+
+
+
+
+/* =========================================================
+
+   INITIALIZE
+
+   ========================================================= */
+
+
+
+async function init() {
+
+
+
+    shaka.polyfill.installAll();
+
+
+
+
+
+    if (
+
+        !shaka.Player.isBrowserSupported()
+
+    ) {
+
+
+
+        setStatus(
+
+            "Browser is not supported by Shaka",
+
+            "bad"
+
+        );
+
+
+
+        return;
+
+    }
+
+
+
+
+
+    video =
+        playerRoot.querySelector(".player-video");
+
+
+
+
+
+    player = new shaka.Player();
+    await player.attach(video);
+    ui = new shaka.ui.Overlay(
+        player,
+        video.parentElement,
+        video
+    );
+    ui.configure({
+        controlPanelElements: [
+            "play_pause",
+            "time_and_duration",
+            "language",
+            "quality",
+            "spacer",
+            "mute",
+            "volume",
+            "fullscreen"
+        ]
+    });
+
+
+
+
+
+    /*
+     * Configure DRM BEFORE loading MPD.
+     */
+
+
+
+    configureDRM();
+
+
+
+
+
+    /*
+     * Install diagnostics.
+     */
+
+
+
+    installDrmDiagnostics();
+
+
+
+    installRequestFilter();
+
+
+
+    installVideoDiagnostics();
+
+    log(
+
+        "%c[PLAYER READY]",
+
+        "color:#00ff00;font-weight:bold"
+
+    );
+
+
+
+
+
+    log(
+
+        "[SHAKA VERSION]",
+
+        SHAKA_VERSION
+
+    );
+
+
+
+
+
+    log(
+
+        "[LICENSE URL]",
+
+        DRM_LICENSE_URL
+
+    );
+
+
+
+
+
+    setStatus(
+        "Player ready. Add an MPD URL as ?url=... in the page address."
+    );
+}
+
+
+
+/* =========================================================
+
+   START
+
+   ========================================================= */
+
+
+
+const initialMpdUrl =
+    new URLSearchParams(window.location.search).get("url");
+
+if (initialMpdUrl) {
+    init().then(() => loadVideo(initialMpdUrl)).catch(error => {
+        setStatus("Player initialization failed.", "bad");
+    });
+} else {
+init().catch(error => {
+setStatus("Player initialization failed.", "bad");
 });
-
-function getSafeMaxBandwidth(tracks) {
-  const bws = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
-  if (bws.length <= 1) return Infinity;
-  const secondHighest = bws[bws.length - 2];
-  const highest       = bws[bws.length - 1];
-  if (highest > secondHighest * 3) {
-    console.warn('Inflated bandwidth detected, capping ABR at', secondHighest);
-    return secondHighest;
-  }
-  return Infinity;
 }
 
-function showError(msg, detail = '') {
-  cancelAnimationFrame(bufferCheckRaf);
-  bufOverlay.classList.remove('visible');
-  playOverlay.classList.add('hidden');
-  errMsg.textContent    = msg;
-  errDetail.textContent = detail;
-  errOverlay.classList.add('visible');
-}
 
-async function initPlayer() {
-  if (player) { await player.destroy(); player = null; }
-  segmentErrorCount = 0;
-  player = new shaka.Player(video);
 
-  player.configure({
-    streaming: {
-      bufferingGoal:   12,
-      rebufferingGoal: 3,
-      retryParameters: {
-        maxAttempts:   9999,
-        baseDelay:     1000,
-        backoffFactor: 1.2,
-        fuzzFactor:    0.5,
-        timeout:       30000,
-      },
-      stallEnabled:   true,
-      stallThreshold: 1,
-      stallSkip:      0.5,
-    },
-    abr: {
-      enabled: false,
-      defaultBandwidthEstimate: 300000,
-      restrictions: { maxBandwidth: 700000 },
-    },
-    manifest: {
-      dash: {
-        ignoreMinBufferTime:              true,
-        ignoreSuggestedPresentationDelay: true,
-      }
-    }
-  });
+})();
 
-  player.addEventListener('error', (e) => {
-    const detail         = e.detail;
-    const isNetworkError = detail?.category === shaka.util.Error.Category.NETWORK;
-    if (isNetworkError) {
-      segmentErrorCount++;
-      console.warn(`Retrying segment (${segmentErrorCount})`, detail?.data?.[0]);
-      return;
-    }
-    console.error('Shaka fatal error', detail);
-    showError(
-      `Playback error (code ${detail?.code ?? '?'}).`,
-      detail?.category === shaka.util.Error.Category.MANIFEST
-        ? 'Could not parse the stream manifest.'
-        : 'Try retrying or selecting a different quality.'
-    );
-  });
-}
-
-function getBufferedAhead() {
-  const t = video.currentTime;
-  try {
-    const info = player.getBufferedInfo();
-    for (const r of (info.total || [])) {
-      if (t >= r.start - 0.1 && t <= r.end) return r.end - t;
-    }
-    if (info.total && info.total.length) {
-      return Math.max(0, info.total[0].end - t);
-    }
-  } catch(e) { /* player not ready */ }
-
-  const buf = video.buffered;
-  if (!buf.length) return 0;
-  for (let i = 0; i < buf.length; i++) {
-    if (t >= buf.start(i) - 0.1 && t <= buf.end(i)) return buf.end(i) - t;
-  }
-  return Math.max(0, buf.end(buf.length - 1) - t);
-}
-
-// Wait for video.readyState to reach at least HAVE_FUTURE_DATA (2)
-function waitForReadyState(minState, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    if (video.readyState >= minState) { resolve(); return; }
-    const deadline = setTimeout(() => {
-      video.removeEventListener('canplay', onReady);
-      video.removeEventListener('canplaythrough', onReady);
-      video.removeEventListener('loadeddata', onReady);
-      reject(new Error('readyState timeout'));
-    }, timeoutMs);
-    function onReady() {
-      if (video.readyState >= minState) {
-        clearTimeout(deadline);
-        video.removeEventListener('canplay', onReady);
-        video.removeEventListener('canplaythrough', onReady);
-        video.removeEventListener('loadeddata', onReady);
-        resolve();
-      }
-    }
-    video.addEventListener('canplay', onReady);
-    video.addEventListener('canplaythrough', onReady);
-    video.addEventListener('loadeddata', onReady);
-  });
-}
-
-async function doAutoPlay() {
-  cancelAnimationFrame(bufferCheckRaf);
-  bufLabel.textContent = 'Starting playback…';
-
-  // KEY FIX: wait until browser can actually play (readyState >= 2)
-  // readyState=1 means data is in Shaka's buffer but not yet decoded by the browser
-  try {
-    console.log('Waiting for readyState >= 2, current:', video.readyState);
-    await waitForReadyState(2, READY_STATE_TIMEOUT_MS);
-    console.log('readyState reached:', video.readyState);
-  } catch(e) {
-    console.warn('readyState wait timed out, trying play() anyway');
-  }
-
-  bufOverlay.classList.remove('visible');
-  video.controls = true;
-
-  const tracks = player.getVariantTracks();
-  const safeBw = getSafeMaxBandwidth(tracks);
-  player.configure({
-    abr: {
-      enabled: true,
-      restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 },
-    }
-  });
-
-  console.log('doAutoPlay() called, readyState=', video.readyState);
-  try {
-    await video.play();
-    console.log('play() succeeded');
-  } catch(err) {
-    console.error('play() rejected:', err?.name, err?.message);
-    // NotAllowedError = autoplay blocked by browser, show manual play button
-    if (err?.name === 'NotAllowedError') {
-      bufOverlay.classList.remove('visible');
-      video.controls = true;
-      // video is ready, user just needs to tap play in the native controls
-    }
-  }
-}
-
-function startBufferWatch() {
-  let lastProgress = Date.now();
-  let lastBuffered = -1;
-
-  function check() {
-    const buffered = getBufferedAhead();
-    console.log('buffered=', buffered, 'readyState=', video.readyState, 'paused=', video.paused);
-
-    const pct = Math.min(100, (buffered / BUFFER_TARGET) * 100);
-    bufBar.style.width   = pct + '%';
-    bufLabel.textContent = `Buffering… ${Math.round(pct)}%`;
-
-    if (buffered > lastBuffered + 0.05) {
-      lastBuffered            = buffered;
-      lastProgress            = Date.now();
-      bufSublabel.textContent = '';
-    }
-
-    const elapsed = Date.now() - lastProgress;
-
-    if (elapsed > BUFFER_TIMEOUT_MS) {
-      showError(
-        'Stream timed out.',
-        'No data received. The link may be broken, expired, or blocked by CORS.'
-      );
-      return;
-    }
-
-    if (elapsed > 8000) {
-      bufSublabel.textContent = 'Slow connection — still trying…';
-    }
-
-    if (buffered >= BUFFER_TARGET) {
-      doAutoPlay(); // async — does not block the RAF loop
-    } else {
-      bufferCheckRaf = requestAnimationFrame(check);
-    }
-  }
-
-  bufferCheckRaf = requestAnimationFrame(check);
-}
-
-function pickStartTrack(tracks) {
-  if (!tracks || !tracks.length) return null;
-  return [...tracks].sort((a, b) => (a.bandwidth || 0) - (b.bandwidth || 0))[0];
-}
-
-playOverlay.addEventListener('click', async () => {
-  playOverlay.classList.add('hidden');
-  bufOverlay.classList.add('visible');
-  bufBar.style.width      = '0%';
-  bufLabel.textContent    = 'Buffering… 0%';
-  bufSublabel.textContent = '';
-  segmentErrorCount       = 0;
-
-  video.pause();
-
-  let tracks = player.getVariantTracks();
-  if (!tracks.length) {
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 100));
-      tracks = player.getVariantTracks();
-      if (tracks.length) break;
-    }
-  }
-
-  if (tracks.length) {
-    const startTrack = pickStartTrack(tracks);
-    if (startTrack) {
-      console.log('Starting with track:', startTrack.height + 'p', startTrack.bandwidth, startTrack.language);
-      player.selectVariantTrack(startTrack, true);
-    }
-  } else {
-    console.warn('No variant tracks found after waiting — proceeding anyway');
-  }
-
-  startBufferWatch();
-});
-
-async function loadVideo(url) {
-  currentUrl = url;
-  cancelAnimationFrame(bufferCheckRaf);
-  errOverlay.classList.remove('visible');
-  bufOverlay.classList.remove('visible');
-  video.controls = false;
-  playOverlay.classList.remove('hidden');
-  bufBar.style.width      = '0%';
-  bufSublabel.textContent = '';
-
-  await initPlayer();
-
-  try {
-    await player.load(url);
-    console.log('Tracks after load:', player.getVariantTracks());
-    console.log('duration=', video.duration, 'readyState=', video.readyState);
-    video.pause();
-    renderQualityTracks();
-    renderAudioTracks();
-    console.log('Stream loaded. Tracks:', player.getVariantTracks().length);
-  } catch (e) {
-    console.error('Load error', e);
-    let detail = 'The URL may be invalid or expired.';
-    if (e.code === 1001 || e.code === 1002 || e.code === 1003) {
-      detail = 'Network error — check if the Cloudflare URL is reachable and CORS is set.';
-    } else if (e.code === 4001 || e.code === 4016) {
-      detail = 'Manifest parse error — confirm the URL points to a valid .mpd file.';
-    }
-    showError(`Failed to load stream (code ${e.code ?? '?'}).`, detail);
-  }
-}
-
-function retryLoad() {
-  errOverlay.classList.remove('visible');
-  errDetail.textContent = '';
-  if (currentUrl) loadVideo(currentUrl);
-}
-
-/* ── quality / audio track panels ── */
-
-function formatBitrate(bps) {
-  if (!bps) return '';
-  return bps >= 1000000
-    ? (bps / 1000000).toFixed(1) + 'M'
-    : Math.round(bps / 1000) + 'k';
-}
-function qualityLabel(t) {
-  return t.height ? t.height + 'p' : t.width ? t.width + 'w' : 'Track ' + t.id;
-}
-
-function renderQualityTracks() {
-  const container = document.getElementById('quality-list');
-  container.innerHTML = '';
-  const tracks = player.getVariantTracks();
-  const seen   = new Map();
-  for (const t of tracks) {
-    const key = t.height || t.width || t.id;
-    if (!seen.has(key) || t.bandwidth > seen.get(key).bandwidth) seen.set(key, t);
-  }
-  const unique = [...seen.values()].sort((a, b) => (b.height || 0) - (a.height || 0));
-  if (!unique.length) {
-    container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
-    return;
-  }
-  document.getElementById('video-dot').style.display = 'inline-block';
-
-  const allBws        = tracks.map(t => t.bandwidth).filter(Boolean).sort((a, b) => a - b);
-  const highest       = allBws[allBws.length - 1];
-  const secondHighest = allBws[allBws.length - 2];
-  const isInflatedPresent = allBws.length > 1 && highest > secondHighest * 3;
-
-  const autoBtn = document.createElement('button');
-  autoBtn.className = 'tp-item active';
-  autoBtn.innerHTML = `Auto <span class="tp-badge" style="background:rgba(74,222,128,0.2);color:#4ade80">ABR</span>`;
-  autoBtn.onclick = () => {
-    const safeBw = getSafeMaxBandwidth(player.getVariantTracks());
-    player.configure({ abr: { enabled: true, restrictions: { maxBandwidth: safeBw !== Infinity ? safeBw : 10000000 } } });
-    container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
-    autoBtn.classList.add('active');
-  };
-  container.appendChild(autoBtn);
-
-  unique.forEach(track => {
-    const isInflated = isInflatedPresent && track.bandwidth === highest;
-    const btn        = document.createElement('button');
-    btn.className    = 'tp-item';
-    const qlbl       = qualityLabel(track);
-    const blbl       = formatBitrate(track.bandwidth);
-    btn.innerHTML    = `${qlbl}${blbl ? `<span class="tp-badge">${blbl}</span>` : ''}${isInflated ? `<span class="tp-badge" style="background:rgba(251,191,36,0.2);color:#fbbf24">⚠</span>` : ''}`;
-    btn.onclick = () => {
-      player.configure({ abr: { enabled: false, restrictions: { maxBandwidth: Infinity } } });
-      const match = player.getVariantTracks().find(t =>
-        (t.height || t.width || t.id) === (track.height || track.width || track.id)
-      );
-      if (match) player.selectVariantTrack(match, true);
-      container.querySelectorAll('.tp-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    };
-    container.appendChild(btn);
-  });
-}
-
-const LANG_NAMES = {
-  hi: 'Hindi', te: 'Telugu', en: 'English', ta: 'Tamil',
-  ka: 'Kannada', ml: 'Malayalam', mr: 'Marathi', bn: 'Bengali', und: 'Default'
-};
-function langLabel(lang, title) {
-  if (title && title !== lang) return title;
-  return LANG_NAMES[lang?.toLowerCase()] || lang?.toUpperCase() || 'Track';
-}
-
-function renderAudioTracks() {
-  const container = document.getElementById('audio-list');
-  container.innerHTML = '';
-  const tracks = player.getVariantTracks();
-  const seen   = new Set();
-  const langs  = [];
-  for (const t of tracks) {
-    const key = t.language || 'und';
-    if (!seen.has(key)) { seen.add(key); langs.push({ language: key, label: t.label || '' }); }
-  }
-  if (!langs.length) {
-    container.innerHTML = '<span style="color:#6b6b8a;font-size:12px;padding:4px 8px">No tracks</span>';
-    return;
-  }
-  document.getElementById('audio-dot').style.display = 'inline-block';
-  const active     = tracks.find(t => t.active);
-  const activeLang = active?.language || langs[0].language;
-  langs.forEach(({ language, label }) => {
-    const btn     = document.createElement('button');
-    btn.className = 'tp-item' + (language === activeLang ? ' active' : '');
-    btn.textContent = langLabel(language, label);
-    btn.onclick = () => {
-      document.querySelectorAll('#audio-list .tp-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      player.selectAudioLanguage(language);
-    };
-    container.appendChild(btn);
-  });
-}
-
-const params  = new URLSearchParams(window.location.search);
-const autoUrl = params.get('url');
-if (autoUrl) loadVideo(autoUrl.trim());
 </script>
-</body>
-</html>
