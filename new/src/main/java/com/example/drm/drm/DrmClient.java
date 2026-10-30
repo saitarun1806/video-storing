@@ -1,6 +1,129 @@
+
 package com.example.drm.drm;
-import com.example.drm.config.Config;import com.fasterxml.jackson.databind.*;import com.fasterxml.jackson.databind.node.ObjectNode;import java.net.*;import java.net.http.*;import java.time.*;
+
+import com.example.drm.config.Config;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+
 public class DrmClient {
- private final Config c;private final HttpClient h=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();private final ObjectMapper m=new ObjectMapper();public DrmClient(Config c){this.c=c;}
- public JsonNode register(String videoId,String kid,String key,String mpd)throws Exception{ObjectNode p=m.createObjectNode();p.put("video_id",videoId);p.put("kid",kid.toLowerCase());p.put("key",key.toLowerCase());p.put("mpd_url",mpd);p.put("license_url",c.drmLicenseUrl());p.put("enabled",true);HttpRequest r=HttpRequest.newBuilder(URI.create(c.drmRegisterUrl())).timeout(Duration.ofSeconds(60)).header("Authorization","Bearer "+c.drmRegisterSecret()).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(m.writeValueAsString(p))).build();HttpResponse<String> res=h.send(r,HttpResponse.BodyHandlers.ofString());if(res.statusCode()/100!=2)throw new IllegalStateException("DRM registration HTTP "+res.statusCode()+": "+res.body());JsonNode out=m.readTree(res.body());if(!out.path("success").asBoolean(false))throw new IllegalStateException("DRM worker rejected registration: "+out);return out;}
+
+    private final Config config;
+
+    private final HttpClient httpClient =
+            HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(30))
+                    .build();
+
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
+
+    public DrmClient(Config config) {
+        this.config = config;
+    }
+
+    public JsonNode register(
+            String videoId,
+            String kid,
+            String key,
+            String mpd
+    ) throws Exception {
+
+        ObjectNode payload =
+                objectMapper.createObjectNode();
+
+        payload.put(
+                "video_id",
+                videoId
+        );
+
+        payload.put(
+                "kid",
+                kid.toLowerCase()
+        );
+
+        payload.put(
+                "key",
+                key.toLowerCase()
+        );
+
+        payload.put(
+                "mpd_url",
+                mpd
+        );
+
+        payload.put(
+                "license_url",
+                config.drmLicenseUrl()
+        );
+
+        payload.put(
+                "enabled",
+                true
+        );
+
+        HttpRequest request =
+                HttpRequest.newBuilder(
+                                URI.create(
+                                        config.drmRegisterUrl()
+                                )
+                        )
+                        .timeout(
+                                Duration.ofSeconds(60)
+                        )
+                        .header(
+                                "Authorization",
+                                "Bearer "
+                                        + config.drmRegisterSecret()
+                        )
+                        .header(
+                                "Content-Type",
+                                "application/json"
+                        )
+                        .POST(
+                                HttpRequest.BodyPublishers.ofString(
+                                        objectMapper.writeValueAsString(
+                                                payload
+                                        )
+                                )
+                        )
+                        .build();
+
+        HttpResponse<String> response =
+                httpClient.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
+
+        if (response.statusCode() / 100 != 2) {
+
+            throw new IllegalStateException(
+                    "DRM registration HTTP "
+                            + response.statusCode()
+                            + ": "
+                            + response.body()
+            );
+        }
+
+        JsonNode result =
+                objectMapper.readTree(
+                        response.body()
+                );
+
+        if (!result.path("success").asBoolean(false)) {
+
+            throw new IllegalStateException(
+                    "DRM worker rejected registration: "
+                            + result
+            );
+        }
+
+        return result;
+    }
 }

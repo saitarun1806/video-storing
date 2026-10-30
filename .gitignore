@@ -1,0 +1,82 @@
+# ==============================
+# Environment / Secrets
+# ==============================
+
+
+# ==============================
+# Java / Maven
+# ==============================
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# ==============================
+# IDE
+# ==============================
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# ==============================
+# OS
+# ==============================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ==============================
+# Application temporary files
+# ==============================
+drm_jobs/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# ==============================
+# Logs
+# ==============================
+*.log
+logs/
+
+# ==============================
+# Media files
+# ==============================
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.ts
+*.m4s
+*.mpd
+
+# ==============================
+# Encryption / DRM temporary files
+# ==============================
+*.key
+*.bin
+*.pssh
+
+# ==============================
+# Downloaded archives / binaries
+# ==============================
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# ==============================
+# Local scripts/config
+# ==============================
+*.local
+config.local.*

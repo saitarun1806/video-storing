@@ -1,10 +1,42 @@
+
 package com.example.drm.util;
+
 public final class Log {
- private Log(){}
- public static void banner(String s){System.out.println("\n"+"=".repeat(72)+"\n"+s+"\n"+"=".repeat(72));}
- public static void info(String s){System.out.println("[INFO] "+s);}
- public static void ok(String s){System.out.println("[OK]   "+s);}
- public static void warn(String s){System.out.println("[WARN] "+s);}
- public static void err(String s){System.err.println("[ERR]  "+s);}
- public static void job(int n,String s){System.out.println("[JOB "+n+"] "+s);}
+
+    private Log() {
+    }
+
+    public static void banner(String message) {
+
+        System.out.println(
+                "\n"
+                        + "=".repeat(72)
+                        + "\n"
+                        + message
+                        + "\n"
+                        + "=".repeat(72)
+        );
+    }
+
+    public static void info(String message) {
+        System.out.println("[INFO] " + message);
+    }
+
+    public static void ok(String message) {
+        System.out.println("[OK]   " + message);
+    }
+
+    public static void warn(String message) {
+        System.out.println("[WARN] " + message);
+    }
+
+    public static void err(String message) {
+        System.err.println("[ERR]  " + message);
+    }
+
+    public static void job(int number, String message) {
+        System.out.println(
+                "[JOB " + number + "] " + message
+        );
+    }
 }

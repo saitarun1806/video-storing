@@ -1,24 +1,823 @@
+
 package com.example.drm.discord;
 
-import com.example.drm.config.Config;import com.example.drm.util.Log;import com.fasterxml.jackson.databind.*;
-import java.io.*;import java.net.*;import java.net.http.*;import java.nio.charset.StandardCharsets;import java.nio.file.*;import java.time.*;import java.util.*;import java.util.concurrent.*;import java.util.concurrent.atomic.AtomicLong;
+import com.example.drm.config.Config;
+import com.example.drm.util.Log;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-public class DiscordUploader implements AutoCloseable {
- public record Bot(int index,String token){} public record UploadResult(String filename,int botIndex,String messageId,String attachmentId,String discordUrl,String resolverUrl){}
- private final Config c;private final List<Bot> bots;private final HttpClient http;private final ExecutorService pool;private final AtomicLong cooldownUntil=new AtomicLong(0);private volatile int primary=0;
- public DiscordUploader(Config c,List<Bot> bots){this.c=c;this.bots=bots;if(bots.isEmpty())throw new IllegalArgumentException("No Discord bots");this.http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();this.pool=Executors.newFixedThreadPool(c.uploadConcurrency());}
- public Map<String,UploadResult> uploadSegments(Path dir)throws Exception{List<Path> files;try(var s=Files.list(dir)){files=s.filter(Files::isRegularFile).filter(p->p.getFileName().toString().endsWith(".m4s")).sorted().toList();}if(files.isEmpty())throw new IOException("No .m4s files");
-  Log.banner("UPLOADING ENCRYPTED SEGMENTS");Log.info("Segments="+files.size()+" concurrency="+c.uploadConcurrency());
-  List<CompletableFuture<UploadResult>> fs=new ArrayList<>();for(Path f:files)fs.add(CompletableFuture.supplyAsync(()->{try{return uploadWithRetry(f);}catch(Exception e){throw new CompletionException(e);}},pool));
-  Map<String,UploadResult> out=new ConcurrentHashMap<>();for(var f:fs){UploadResult r=f.join();out.put(r.filename(),r);Log.ok(r.filename()+" -> bot="+r.botIndex()+" message="+r.messageId()+" attachment="+r.attachmentId());}return new TreeMap<>(out);
- }
- public UploadResult uploadSingle(Path file)throws Exception{return uploadWithRetry(file);}
- private UploadResult uploadWithRetry(Path file)throws Exception{int failures=0;while(true){long wait=cooldownUntil.get()-System.currentTimeMillis();if(wait>0)Thread.sleep(wait);Bot b=bots.get(Math.floorMod(primary,bots.size()));try{HttpResponse<String> r=send(file,b);if(r.statusCode()>=200&&r.statusCode()<300)return parse(file,b,r.body());if(r.statusCode()==429){double sec=retryAfter(r);long until=System.currentTimeMillis()+(long)(sec*1000);cooldownUntil.accumulateAndGet(until,Math::max);Log.warn("429 for "+file.getFileName()+", honoring retry_after="+sec+"s");continue;}failures++;Log.warn("Discord HTTP "+r.statusCode()+" for "+file.getFileName());if(failures>=3&&bots.size()>1){primary=(primary+1)%bots.size();failures=0;Thread.sleep((long)(c.botFailureCooldownSeconds()*1000));}else if(failures>=6)throw new IOException("Discord upload failed: "+r.body());}catch(IOException|InterruptedException e){if(e instanceof InterruptedException)Thread.currentThread().interrupt();failures++;if(failures>=3&&bots.size()>1){primary=(primary+1)%bots.size();failures=0;}if(failures>=6)throw e;Thread.sleep((long)(c.botFailureCooldownSeconds()*1000));}}
- }
- private HttpResponse<String> send(Path file,Bot b)throws IOException,InterruptedException{String boundary="----JavaDASH"+System.nanoTime();byte[] bytes=Files.readAllBytes(file);ByteArrayOutputStream out=new ByteArrayOutputStream();write(out,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n{\"content\":\"\"}\r\n");write(out,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\""+file.getFileName()+"\"\r\nContent-Type: application/octet-stream\r\n\r\n");out.write(bytes);write(out,"\r\n--"+boundary+"--\r\n");
-  HttpRequest req=HttpRequest.newBuilder(URI.create("https://discord.com/api/v10/channels/"+c.discordChannelId()+"/messages")).timeout(Duration.ofSeconds(c.uploadTimeoutSeconds())).header("Authorization","Bot "+b.token()).header("User-Agent","DASH-DRM-Uploader-Java/1.0").header("Content-Type","multipart/form-data; boundary="+boundary).POST(HttpRequest.BodyPublishers.ofByteArray(out.toByteArray())).build();return http.send(req,HttpResponse.BodyHandlers.ofString());}
- private UploadResult parse(Path f,Bot b,String body){try{JsonNode j=new ObjectMapper().readTree(body);String mid=j.path("id").asText();JsonNode a=j.path("attachments").get(0);if(a==null)throw new IllegalStateException("No attachment");String aid=a.path("id").asText();String du=a.path("url").asText();if(mid.isBlank()||aid.isBlank()||du.isBlank())throw new IllegalStateException("Incomplete Discord response");String resolver=c.cdnWorkerUrl()+"/"+b.index()+"/"+mid+"/"+aid;return new UploadResult(f.getFileName().toString(),b.index(),mid,aid,du,resolver);}catch(Exception e){throw new CompletionException(e);}}
- private double retryAfter(HttpResponse<String> r){try{double x=new ObjectMapper().readTree(r.body()).path("retry_after").asDouble();if(x>0)return x;}catch(Exception ignored){}try{return Double.parseDouble(r.headers().firstValue("Retry-After").orElse("1"));}catch(Exception e){return 1;}}
- private static void write(OutputStream o,String s)throws IOException{o.write(s.getBytes(StandardCharsets.UTF_8));}
- @Override public void close(){pool.shutdown();}
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public final class DiscordUploader implements AutoCloseable {
+
+    private final Config config;
+    private final List<Bot> bots;
+    private final HttpClient http;
+    private final ObjectMapper mapper;
+
+    /*
+     * One single-thread worker per Discord bot.
+     *
+     * 48 bots = 48 independent upload queues.
+     */
+    private final List<ExecutorService> botWorkers;
+
+    /*
+     * Used by uploadSingle().
+     *
+     * 0 -> bot 0
+     * 1 -> bot 1
+     * ...
+     * 47 -> bot 47
+     * 48 -> bot 0
+     */
+    private final AtomicInteger nextBot =
+            new AtomicInteger(0);
+
+    /*
+     * Last upload-start time for every bot.
+     */
+    private final long[] lastUploadTime;
+
+    private final Object rateLock =
+            new Object();
+
+    public DiscordUploader(
+            Config config,
+            List<Bot> bots
+    ) {
+
+        this.config = config;
+
+        List<Bot> sorted =
+                new ArrayList<>(bots);
+
+        sorted.sort(
+                Comparator.comparingInt(
+                        Bot::index
+                )
+        );
+
+        this.bots =
+                List.copyOf(sorted);
+
+        if (this.bots.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No Discord bots supplied"
+            );
+        }
+
+        this.http =
+                HttpClient.newBuilder()
+                        .connectTimeout(
+                                Duration.ofSeconds(30)
+                        )
+                        .build();
+
+        this.mapper =
+                new ObjectMapper();
+
+        this.lastUploadTime =
+                new long[this.bots.size()];
+
+        this.botWorkers =
+                new ArrayList<>();
+
+        /*
+         * Create exactly one worker for every bot.
+         */
+        for (Bot bot : this.bots) {
+
+            ExecutorService worker =
+                    Executors.newSingleThreadExecutor(
+                            runnable -> {
+
+                                Thread thread =
+                                        new Thread(
+                                                runnable
+                                        );
+
+                                thread.setName(
+                                        "discord-bot-"
+                                                + bot.index()
+                                );
+
+                                thread.setDaemon(
+                                        true
+                                );
+
+                                return thread;
+                            }
+                    );
+
+            botWorkers.add(worker);
+        }
+
+        Log.info(
+                "Discord uploader initialized"
+        );
+
+        Log.info(
+                "Active bots="
+                        + this.bots.size()
+        );
+
+        Log.info(
+                "Rate=1 upload/sec per bot"
+        );
+    }
+
+    /**
+     * Existing VideoProcessor API.
+     *
+     * Returns:
+     *
+     * Map<filename, UploadResult>
+     */
+    public Map<String, UploadResult> uploadSegments(
+            Path directory
+    ) throws Exception {
+
+        if (!Files.isDirectory(directory)) {
+
+            throw new IOException(
+                    "Not a directory: "
+                            + directory
+            );
+        }
+
+        List<Path> files;
+
+        try (var stream =
+                     Files.list(directory)) {
+
+            files =
+                    stream
+                            .filter(
+                                    Files::isRegularFile
+                            )
+                            .filter(
+                                    p ->
+                                            p.getFileName()
+                                                    .toString()
+                                                    .toLowerCase()
+                                                    .endsWith(".m4s")
+                            )
+                            .sorted()
+                            .toList();
+        }
+
+        return uploadSegments(
+                files
+        );
+    }
+
+    /**
+     * Upload a list of files.
+     *
+     * Returns Map<filename, UploadResult>
+     */
+    public Map<String, UploadResult> uploadSegments(
+            List<Path> files
+    ) throws Exception {
+
+        Map<String, UploadResult> results =
+                new LinkedHashMap<>();
+
+        if (files == null || files.isEmpty()) {
+            return results;
+        }
+
+        Log.info(
+                "UPLOADING ENCRYPTED SEGMENTS"
+        );
+
+        Log.info(
+                "Segments="
+                        + files.size()
+        );
+
+        Log.info(
+                "Active bots="
+                        + bots.size()
+        );
+
+        Log.info(
+                "Rate=1 upload/sec per bot"
+        );
+
+        /*
+         * Each bot receives files in round-robin order.
+         *
+         * Example with 48 bots:
+         *
+         * file 0  -> bot 0
+         * file 1  -> bot 1
+         * ...
+         * file 47 -> bot 47
+         * file 48 -> bot 0
+         */
+        List<List<Path>> assignments =
+                new ArrayList<>();
+
+        for (int i = 0;
+             i < bots.size();
+             i++) {
+
+            assignments.add(
+                    new ArrayList<>()
+            );
+        }
+
+        for (int i = 0;
+             i < files.size();
+             i++) {
+
+            int botPosition =
+                    i % bots.size();
+
+            Path file =
+                    files.get(i);
+
+            assignments
+                    .get(botPosition)
+                    .add(file);
+
+            Log.info(
+                    "ASSIGN "
+                            + file.getFileName()
+                            + " -> bot="
+                            + bots.get(
+                                    botPosition
+                            ).index()
+            );
+        }
+
+        /*
+         * One Future per active bot.
+         */
+        List<Future<List<UploadResult>>> futures =
+                new ArrayList<>();
+
+        for (int i = 0;
+             i < bots.size();
+             i++) {
+
+            List<Path> assigned =
+                    assignments.get(i);
+
+            if (assigned.isEmpty()) {
+                continue;
+            }
+
+            final int botPosition = i;
+
+            Future<List<UploadResult>> future =
+                    botWorkers
+                            .get(botPosition)
+                            .submit(
+                                    () ->
+                                            uploadBotQueue(
+                                                    botPosition,
+                                                    assigned
+                                            )
+                            );
+
+            futures.add(future);
+        }
+
+        /*
+         * Collect all bot results.
+         */
+        for (Future<List<UploadResult>> future :
+                futures) {
+
+            List<UploadResult> botResults =
+                    future.get();
+
+            for (UploadResult result :
+                    botResults) {
+
+                results.put(
+                        result.filename(),
+                        result
+                );
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Existing VideoProcessor API.
+     */
+    public UploadResult uploadSingle(
+            Path file
+    ) throws Exception {
+
+        int position =
+                Math.floorMod(
+                        nextBot.getAndIncrement(),
+                        bots.size()
+                );
+
+        Bot bot =
+                bots.get(position);
+
+        Log.info(
+                "ASSIGN "
+                        + file.getFileName()
+                        + " -> bot="
+                        + bot.index()
+        );
+
+        return uploadWithRetry(
+                file,
+                bot,
+                position
+        );
+    }
+
+    /**
+     * Process one bot's queue.
+     */
+    private List<UploadResult> uploadBotQueue(
+            int botPosition,
+            List<Path> files
+    ) throws Exception {
+
+        Bot bot =
+                bots.get(
+                        botPosition
+                );
+
+        List<UploadResult> results =
+                new ArrayList<>();
+
+        for (Path file : files) {
+
+            UploadResult result =
+                    uploadWithRetry(
+                            file,
+                            bot,
+                            botPosition
+                    );
+
+            results.add(result);
+        }
+
+        return results;
+    }
+
+    /**
+     * Upload using the assigned bot.
+     *
+     * A 429 does not move the file to bot 0.
+     * The same assigned bot waits and retries.
+     */
+    private UploadResult uploadWithRetry(
+            Path file,
+            Bot bot,
+            int botPosition
+    ) throws Exception {
+
+        while (true) {
+
+            waitForBotRateLimit(
+                    botPosition
+            );
+
+            try {
+
+                UploadResult result =
+                        sendFile(
+                                file,
+                                bot
+                        );
+
+                Log.info(
+                        "[OK]   "
+                                + file.getFileName()
+                                + " -> bot="
+                                + result.botIndex()
+                                + " message="
+                                + result.messageId()
+                                + " attachment="
+                                + result.attachmentId()
+                );
+
+                return result;
+
+            } catch (RateLimitedException e) {
+
+                Log.warn(
+                        "429 for "
+                                + file.getFileName()
+                                + " on bot="
+                                + bot.index()
+                                + ", retry_after="
+                                + e.retryAfter
+                                + "s"
+                );
+
+                long waitMs =
+                        Math.max(
+                                1000L,
+                                (long)
+                                        Math.ceil(
+                                                e.retryAfter
+                                                        * 1000.0
+                                        )
+                        );
+
+                Thread.sleep(
+                        waitMs
+                );
+
+            } catch (Exception e) {
+
+                Log.warn(
+                        "Upload failed for "
+                                + file.getFileName()
+                                + " on bot="
+                                + bot.index()
+                                + ": "
+                                + e.getMessage()
+                );
+
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Maximum one upload start per second
+     * for each individual bot.
+     */
+    private void waitForBotRateLimit(
+            int botPosition
+    ) throws InterruptedException {
+
+        synchronized (rateLock) {
+
+            long now =
+                    System.currentTimeMillis();
+
+            long last =
+                    lastUploadTime[
+                            botPosition
+                    ];
+
+            long wait =
+                    1000L
+                            - (now - last);
+
+            if (last != 0L && wait > 0) {
+
+                rateLock.wait(wait);
+            }
+
+            lastUploadTime[
+                    botPosition
+            ] =
+                    System.currentTimeMillis();
+
+            rateLock.notifyAll();
+        }
+    }
+
+    /**
+     * Actual Discord upload.
+     */
+    private UploadResult sendFile(
+            Path file,
+            Bot bot
+    ) throws Exception {
+
+        if (!Files.exists(file)) {
+
+            throw new IOException(
+                    "File does not exist: "
+                            + file
+            );
+        }
+
+        if (!Files.isRegularFile(file)) {
+
+            throw new IOException(
+                    "Not a regular file: "
+                            + file
+            );
+        }
+
+        String filename =
+                file.getFileName()
+                        .toString();
+
+        byte[] data =
+                Files.readAllBytes(file);
+
+        String boundary =
+                "----JavaDiscordUploader"
+                        + System.nanoTime();
+
+        byte[] body =
+                buildMultipartBody(
+                        boundary,
+                        filename,
+                        data
+                );
+
+        String url =
+                "https://discord.com/api/v10/channels/"
+                        + config.discordChannelId()
+                        + "/messages";
+
+        HttpRequest request =
+                HttpRequest.newBuilder()
+                        .uri(
+                                URI.create(url)
+                        )
+                        .timeout(
+                                Duration.ofSeconds(
+                                        config.uploadTimeoutSeconds()
+                                )
+                        )
+                        .header(
+                                "Authorization",
+                                "Bot "
+                                        + bot.token()
+                        )
+                        .header(
+                                "User-Agent",
+                                "DASH-DRM-Uploader/2.0"
+                        )
+                        .header(
+                                "Content-Type",
+                                "multipart/form-data; boundary="
+                                        + boundary
+                        )
+                        .POST(
+                                HttpRequest.BodyPublishers
+                                        .ofByteArray(
+                                                body
+                                        )
+                        )
+                        .build();
+
+        HttpResponse<String> response =
+                http.send(
+                        request,
+                        HttpResponse.BodyHandlers
+                                .ofString()
+                );
+
+        int status =
+                response.statusCode();
+
+        /*
+         * Discord rate limit.
+         */
+        if (status == 429) {
+
+            throw new RateLimitedException(
+                    parseRetryAfter(
+                            response.body()
+                    )
+            );
+        }
+
+        /*
+         * Other Discord error.
+         */
+        if (status < 200
+                || status >= 300) {
+
+            throw new IOException(
+                    "Discord upload failed. HTTP "
+                            + status
+                            + ": "
+                            + response.body()
+            );
+        }
+
+        JsonNode json =
+                mapper.readTree(
+                        response.body()
+                );
+
+        String messageId =
+                json.path("id")
+                        .asText("");
+
+        if (messageId.isBlank()) {
+
+            throw new IOException(
+                    "Discord response missing message id"
+            );
+        }
+
+        JsonNode attachments =
+                json.path(
+                        "attachments"
+                );
+
+        if (!attachments.isArray()
+                || attachments.isEmpty()) {
+
+            throw new IOException(
+                    "Discord response contains no attachment"
+            );
+        }
+
+        JsonNode attachment =
+                attachments.get(0);
+
+        String attachmentId =
+                attachment
+                        .path("id")
+                        .asText("");
+
+        if (attachmentId.isBlank()) {
+
+            throw new IOException(
+                    "Discord response missing attachment id"
+            );
+        }
+
+        /*
+         * IMPORTANT:
+         *
+         * Use the actual assigned bot index.
+         */
+        String resolverUrl =
+                config.cdnWorkerUrl()
+                        + "/"
+                        + bot.index()
+                        + "/"
+                        + messageId
+                        + "/"
+                        + attachmentId;
+
+        return new UploadResult(
+                filename,
+                bot.index(),
+                messageId,
+                attachmentId,
+                resolverUrl
+        );
+    }
+
+    private byte[] buildMultipartBody(
+            String boundary,
+            String filename,
+            byte[] data
+    ) throws IOException {
+
+        ByteArrayOutputStream output =
+                new ByteArrayOutputStream();
+
+        String header =
+                "--"
+                        + boundary
+                        + "\r\n"
+                        + "Content-Disposition: form-data; "
+                        + "name=\"files[0]\"; filename=\""
+                        + escapeFilename(filename)
+                        + "\"\r\n"
+                        + "Content-Type: application/octet-stream\r\n"
+                        + "\r\n";
+
+        output.write(
+                header.getBytes(
+                        StandardCharsets.UTF_8
+                )
+        );
+
+        output.write(data);
+
+        output.write(
+                (
+                        "\r\n--"
+                                + boundary
+                                + "--\r\n"
+                ).getBytes(
+                        StandardCharsets.UTF_8
+                )
+        );
+
+        return output.toByteArray();
+    }
+
+    private String escapeFilename(
+            String filename
+    ) {
+
+        return filename
+                .replace("\\", "_")
+                .replace("\"", "_")
+                .replace("\r", "_")
+                .replace("\n", "_");
+    }
+
+    private double parseRetryAfter(
+            String body
+    ) {
+
+        try {
+
+            JsonNode json =
+                    mapper.readTree(
+                            body
+                    );
+
+            return json
+                    .path("retry_after")
+                    .asDouble(1.0);
+
+        } catch (Exception ignored) {
+
+            return 1.0;
+        }
+    }
+
+    public record Bot(
+            int index,
+            String token
+    ) {
+    }
+
+    public record UploadResult(
+            String filename,
+            int botIndex,
+            String messageId,
+            String attachmentId,
+            String resolverUrl
+    ) {
+    }
+
+    private static final class RateLimitedException
+            extends Exception {
+
+        private final double retryAfter;
+
+        private RateLimitedException(
+                double retryAfter
+        ) {
+
+            this.retryAfter =
+                    retryAfter;
+        }
+    }
+
+    @Override
+    public void close() {
+
+        for (ExecutorService worker :
+                botWorkers) {
+
+            worker.shutdown();
+        }
+
+        for (ExecutorService worker :
+                botWorkers) {
+
+            try {
+
+                if (!worker.awaitTermination(
+                        10,
+                        TimeUnit.SECONDS
+                )) {
+
+                    worker.shutdownNow();
+                }
+
+            } catch (InterruptedException e) {
+
+                worker.shutdownNow();
+
+                Thread.currentThread()
+                        .interrupt();
+            }
+        }
+    }
 }
