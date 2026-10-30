@@ -1,0 +1,12 @@
+package com.example.drm.job;
+
+import com.example.drm.config.Config;import com.example.drm.discord.*;import com.example.drm.encryption.CencService;import com.example.drm.drm.DrmClient;import com.example.drm.media.MediaService;import com.example.drm.mpd.MpdRewriter;import com.example.drm.util.Log;
+import java.nio.file.*;import java.util.*;
+
+public class VideoProcessor {
+ public record Result(boolean success,String videoId,String mpdUrl,String licenseUrl,String kid,String error){}
+ private final Config c;private final MediaService media;private final CencService cenc;private final DiscordUploader discord;private final DrmClient drm;private final MpdRewriter mpd=new MpdRewriter();
+ public VideoProcessor(Config c,MediaService media,CencService cenc,DiscordUploader discord,DrmClient drm){this.c=c;this.media=media;this.cenc=cenc;this.discord=discord;this.drm=drm;}
+ public Result process(String input,int job,int total)throws Exception{String videoId=CencService.videoId(),kid=CencService.hex16(),key=CencService.hex16();Path dir=c.workRoot().resolve(videoId);try{Log.banner("[JOB "+job+"/"+total+"] STARTING");Log.job(job,"Input: "+input);Log.job(job,"Video ID: "+videoId);Log.job(job,"KID: "+kid);Files.createDirectories(dir);Path source=media.prepareSource(input,dir);var tracks=media.detectTracks(source);Path dash=dir.resolve("dash");Path manifest=media.createDash(source,dash,tracks);cenc.encryptDash(dash,kid,key);Map<String,DiscordUploader.UploadResult> uploaded=discord.uploadSegments(dash);mpd.rewrite(manifest,uploaded,kid);DiscordUploader.UploadResult finalMpd=discord.uploadSingle(manifest);String mpdUrl=finalMpd.resolverUrl();drm.register(videoId,kid,key,mpdUrl);Log.banner("[JOB "+job+"/"+total+"] COMPLETED");System.out.println("Video ID : "+videoId);System.out.println("MPD URL  : "+mpdUrl);System.out.println("License  : "+c.drmLicenseUrl());System.out.println("KID      : "+kid);return new Result(true,videoId,mpdUrl,c.drmLicenseUrl(),kid,null);}catch(Exception e){Log.err("JOB "+job+" failed: "+e.getMessage());return new Result(false,videoId,null,c.drmLicenseUrl(),kid,e.getMessage());}finally{try{if(Files.exists(dir))deleteTree(dir);}catch(Exception e){Log.warn("Cleanup failed: "+e.getMessage());}}}
+ private void deleteTree(Path p)throws Exception{try(var s=Files.walk(p)){s.sorted(Comparator.reverseOrder()).forEach(x->{try{Files.deleteIfExists(x);}catch(Exception e){throw new RuntimeException(e);}});}}
+}
